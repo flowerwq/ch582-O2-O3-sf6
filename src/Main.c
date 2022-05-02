@@ -11,7 +11,9 @@
 #include "CH58x_common.h"
 #include "worktime.h"
 #include "storage.h"
-
+#include "upgrade.h"
+#include "oled.h"
+#include "bmp.h"
 /*********************************************************************
  * @fn      main
  *
@@ -31,7 +33,38 @@ int uuid_dump(){
 	PRINT("\r\n");
 	return 0;
 }
-
+int reset_dump(){
+	SYS_ResetStaTypeDef rst = SYS_GetLastResetSta();
+	PRINT("rst(");
+	switch(rst){
+		case RST_STATUS_SW:
+			PRINT("sw reset");
+			break;
+		case RST_STATUS_RPOR:
+			PRINT("poweron");
+			break;
+		case RST_STATUS_WTR:
+			PRINT("wdt");
+			break;
+		case RST_STATUS_MR:
+			PRINT("manual reset");
+			break;
+		case RST_STATUS_LRM0:
+			PRINT("software wakeup");
+			break;
+		case RST_STATUS_GPWSM:
+			PRINT("shutdown wakeup");
+			break;
+		case RST_STATUS_LRM1:
+			PRINT("wdt wakeup");
+			break;
+		case RST_STATUS_LRM2:
+			PRINT("manual wakeup");
+			break;
+	}
+	PRINT(")\r\n");
+	return 0;
+}
 int main()
 {
     uint8_t len;
@@ -44,17 +77,35 @@ int main()
     GPIOA_ModeCfg(GPIO_Pin_8, GPIO_ModeIN_PU);      // RXD-配置上拉输入
     GPIOA_ModeCfg(GPIO_Pin_9, GPIO_ModeOut_PP_5mA); // TXD-配置推挽输出，注意先让IO口输出高电平
     UART1_DefInit();
-	
+
+	reset_dump();
+	PRINT("app start ...\r\n");
 	uuid_dump();
 	st_init();
-
+	upgrade_init();
+	OLED_Init();
+	OLED_ShowString(0, 0, "Hi, Susie!", 16, 1);
+	OLED_Refresh();
+	DelayMs(1000);
+	OLED_ShowString(0, 16, "Let's hang out ", 16, 1);
+	OLED_ShowString(0, 32, "when you free !", 16, 1);
+	OLED_Refresh();
+	DelayMs(1000);
+	OLED_Clear();
+	PRINT("main loop start ...\r\n");
     while(1){
-//		PRINT("worktime:%lu\r\n", worktime_get());
-		if (worktime_since(worktime) >= 1000){
-			PRINT("worktime:%llu\r\n", worktime_get());
+		OLED_Refresh();
+		upgrade_run();
+		st_run();
+		if (worktime_since(worktime) > 1000){
 			worktime = worktime_get();
+			if (worktime % 2){
+				OLED_ShowPicture(32, 0, 64, 64, smail_64x64_2, 1);
+			}else{
+				OLED_ShowPicture(32, 0, 64, 64, smail_64x64_1, 1);
+			}
 		}
-	};
+	}
 }
 
 ///*********************************************************************

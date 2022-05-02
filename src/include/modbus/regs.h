@@ -39,8 +39,6 @@ typedef enum mb_reg_addr{
 	
 	MB_REG_ADDR_CONFIG_BASE = 128,
 	MB_REG_ADDR_OPT_CTRL = MB_REG_ADDR_CONFIG_BASE,
-	MB_REG_ADDR_ADDR_H,
-	MB_REG_ADDR_ADDR_L,
 	MB_REG_ADDR_DATA_LEN_H,
 	MB_REG_ADDR_DATA_LEN_L,
 	MB_REG_ADDR_DATA_CRC,
@@ -54,7 +52,7 @@ typedef enum mb_reg_addr{
 void modbus_regs_init();
 void modbus_reg_update(mb_reg_addr_t addr, uint16_t value);
 uint16_t modbus_reg_get(mb_reg_addr_t addr);
-void modbus_reg_update_uid(uint8_t *uid, uint16_t len);
+void modbus_reg_update_uid(const uint8_t *uid, uint16_t len);
 ModbusError modbus_reg_callback(void *ctx, 
 	const ModbusRegisterCallbackArgs *args,
 	ModbusRegisterCallbackResult *out);

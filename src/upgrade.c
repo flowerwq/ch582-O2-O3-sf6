@@ -7,6 +7,8 @@
 #include "worktime.h"
 #include "uid.h"
 #include "appinfo.h"
+#include "storage.h"
+
 typedef enum upgrade_status{
 	UPGRADE_S_INIT = 0,
 	UPGRADE_S_IDLE,
@@ -16,7 +18,7 @@ typedef enum upgrade_operation{
 	UPGRADE_OPT_RESET = 0,
 	UPGRADE_OPT_ERASE,
 	UPGRADE_OPT_FLASH,
-	UPGRADE_OPT_REFRESH,
+	UPGRADE_OPT_VERIFY,
 }upgrade_opt_t;
 
 typedef enum upgrade_operation_status{
@@ -29,8 +31,8 @@ typedef enum upgrade_operation_status{
 typedef enum upgrade_operation_err{
 	UPGRADE_OPT_OK = 0,
 	UPGRADE_OPT_ERR_ERASE,
-	UPGRADE_OPT_ERR_INVALID_ADDR,
-	UPGRADE_OPT_ERR_CRC,
+	UPGRADE_OPT_ERR_INVALID_IMAGE,
+	UPGRADE_OPT_ERR_VERIFY,
 	UPGRADE_OPT_ERR_FLASH,
 	UPGRADE_OPT_ERR_INVALID_LEN,
 	UPGRADE_OPT_ERR_INVALID_OPT
@@ -43,10 +45,14 @@ typedef struct upgrade_flash_context{
 	uint16_t data_crc;
 	const uint8_t *data_buf;
 	crc16_ctx_t flash_crc_ctx;
+	uint16_t progress;
 } upgrade_flash_ctx_t;
 
 typedef struct upgrade_verify_context{
-	uint16_t crc;
+	uint32_t bytes_verified;
+	uint16_t progress;
+	uint8_t image_md5[16];
+	MD5_CTX md5_ctx;
 } upgrade_verify_ctx_t;
 
 
@@ -62,13 +68,16 @@ typedef union upgrade_opt_context{
 } upgrade_opt_ctx_t;
 
 typedef struct upgrade_context{
+	st_ota_t otainfo;
 	upgrade_status_t status;
 	worktime_t lasttime;
 	upgrade_opt_t opt_code;
 	uint8_t flag_opt;
 	uint8_t flag_standby;
 	uint8_t app_available;
+	appinfo_t appinfo;
 	upgrade_opt_ctx_t opt_ctx;
+	uint32_t image_size;
 	uint32_t bytes_write;
 	MD5_CTX md5_ctx;
 } upgrade_ctx_t;
@@ -87,9 +96,8 @@ typedef struct upgrade_context{
 #define BACKUP_BLOCK_NUM	(BACKUP_PART_SIZE / EEPROM_BLOCK_SIZE)
 
 #define APPINFO_ADDR	(APP_ADDR_START + APPINFO_OFFSET)
+#define BACKUP_APPINFO_ADDR	(BACKUP_ADDR_START + APPINFO_OFFSET)
 #define GOTO_AP()	((void (*)(void))APP_ADDR_START)()
-
-#define UPGRADE_VALID_ADDR(addr)	((addr) >= AP_ADDR && (addr) <= FLASH_ROM_ADDR_MAX)
 
 static upgrade_ctx_t ctx;
 static uint16_t upgrade_magic[4] = {0x4367U, 0x6366U, 0x426F, 0x6F74};
@@ -136,22 +144,54 @@ int8_t mb_reg_before_write(mb_reg_addr_t addr, uint16_t value){
 	}
 	return 0;
 }
-void upgrade_read_appinfo(){
-	appinfo_t appinfo;
-	FLASH_ROM_VERIFY(APPINFO_ADDR, (uint8_t *)&appinfo, sizeof(appinfo_t));
-	if (APP_MAGIC == appinfo.magic){
-		modbus_reg_update(MB_REG_ADDR_APP_VID, appinfo.vid);
-		modbus_reg_update(MB_REG_ADDR_APP_PID, appinfo.pid);
-		modbus_reg_update(MB_REG_ADDR_APP_VERSION_H, appinfo.version >> 16);
-		modbus_reg_update(MB_REG_ADDR_APP_VERSION_L, appinfo.version);
-		ctx.app_available = 1;
-	}else{
-		modbus_reg_update(MB_REG_ADDR_APP_VID, 0);
-		modbus_reg_update(MB_REG_ADDR_APP_PID, 0);
-		modbus_reg_update(MB_REG_ADDR_APP_VERSION_H, 0);
-		modbus_reg_update(MB_REG_ADDR_APP_VERSION_L, 0);
-		ctx.app_available = 0;
+
+/**
+ *	@brief verify app image
+ *	@param appsize size of app image
+ *	@param app_md5	md5 hash of app image
+ *	@return 0 - success, (!0) - failure
+ *
+ */
+static int upgrade_app_verify(int appsize, uint8_t *app_md5){
+	MD5_CTX md5_ctx;
+	int bytes_verified = 0;
+	uint32_t bytes_read = 0;
+	uint8_t buf[EEPROM_PAGE_SIZE];
+	uint8_t md5[16] = {0};
+	MD5Init(&md5_ctx);
+	while(bytes_verified < appsize){
+		bytes_read = min(EEPROM_BLOCK_SIZE, appsize - bytes_verified);
+		FLASH_ROM_READ(APP_ADDR_START + bytes_verified, buf, bytes_read);
+		MD5Update(&md5_ctx, buf, bytes_read);
 	}
+	MD5Final(md5, &md5_ctx);
+	return memcmp(md5, app_md5, 16);
+}
+
+void upgrade_read_appinfo(){
+	uint8_t buf[ALIGN_4(sizeof(appinfo_t))] = {0};
+	appinfo_t *appinfo = (appinfo_t *)buf;
+	st_ota_t otainfo = {0};
+	st_get_ota(&otainfo);
+	FLASH_ROM_READ(APPINFO_ADDR, buf, sizeof(appinfo_t));
+	if (APP_MAGIC == appinfo->magic && 
+		appinfo->version == otainfo.app_version)
+	{
+		if (0 == upgrade_app_verify(otainfo.app_size, otainfo.app_md5)){
+			modbus_reg_update(MB_REG_ADDR_APP_VID, appinfo->vid);
+			modbus_reg_update(MB_REG_ADDR_APP_PID, appinfo->pid);
+			modbus_reg_update(MB_REG_ADDR_APP_VERSION_H, appinfo->version >> 16);
+			modbus_reg_update(MB_REG_ADDR_APP_VERSION_L, appinfo->version);
+			memcpy(&ctx.appinfo, buf, sizeof(appinfo_t));
+			ctx.app_available = 1;
+			return ;
+		}
+	}
+	modbus_reg_update(MB_REG_ADDR_APP_VID, 0);
+	modbus_reg_update(MB_REG_ADDR_APP_PID, 0);
+	modbus_reg_update(MB_REG_ADDR_APP_VERSION_H, 0);
+	modbus_reg_update(MB_REG_ADDR_APP_VERSION_L, 0);
+	ctx.app_available = 0;
 }
 void upgrade_init(){
 	uint32_t buflen;
@@ -203,7 +243,7 @@ void upgrade_flash_start(){
 	if (crc16(ctx.opt_ctx.flash.data_buf, ctx.opt_ctx.flash.len) != 
 		ctx.opt_ctx.flash.data_crc)
 	{
-		upgrade_opt_finish(UPGRADE_OPT_ERR_CRC);
+		upgrade_opt_finish(UPGRADE_OPT_ERR_VERIFY);
 		return;
 	}
 	if (!ctx.bytes_write){
@@ -213,31 +253,66 @@ void upgrade_flash_start(){
 	crc16_init(&ctx.opt_ctx.flash.flash_crc_ctx);
 }
 
+static int upgrade_is_image_valid(appinfo_t *img_info){
+	if (APP_MAGIC != img_info->magic){
+		goto fail;
+	}
+	if (ctx.app_available){
+		if (ctx.appinfo.vid != img_info->vid || 
+			ctx.appinfo.pid != img_info->pid)
+		{
+			goto fail;
+		}
+	}
+	return 1;
+fail:
+	return 0;
+}
+
 void upgrade_flash_next(){
-	uint16_t offset, crc_flash;
+	uint16_t offset, crc_flash, progress;
 	uint32_t addr, bytes_write;
 	const uint8_t *idx;
 	uint8_t buf[EEPROM_PAGE_SIZE] = {0};
 	
 	addr = ctx.opt_ctx.flash.addr + ctx.opt_ctx.flash.bytes_write;
-	bytes_write = MIN(EEPROM_BLOCK_SIZE, ctx.opt_ctx.flash.len);
+	bytes_write = MIN(EEPROM_PAGE_SIZE, ctx.opt_ctx.flash.len);
 	idx = ctx.opt_ctx.flash.data_buf + ctx.opt_ctx.flash.bytes_write;
-	if (FLASH_ROM_WRITE(addr, idx, bytes_write)){
+	memcpy(buf, idx, bytes_write);
+	
+	//first packet
+	if (!ctx.bytes_write){
+		appinfo_t *appinfo = (appinfo_t *)(buf + APPINFO_OFFSET);
+		if (!upgrade_is_image_valid(appinfo))
+		{
+			upgrade_opt_finish(UPGRADE_OPT_ERR_INVALID_IMAGE);
+			return;
+		}
+	}
+	if (FLASH_ROM_WRITE(addr, buf, bytes_write)){
 		upgrade_opt_finish(UPGRADE_OPT_ERR_FLASH);
 		return;
 	}
-	FLASH_ROM_VERIFY(addr, buf, bytes_write);
-	if (memcmp(buf, idx, bytes_write)){
-		upgrade_opt_finish(UPGRADE_OPT_ERR_FLASH);
+	
+	if (FLASH_ROM_VERIFY(addr, buf, bytes_write)){
+		upgrade_opt_finish(UPGRADE_OPT_ERR_VERIFY);
 		return;
 	}
+	
+	progress = ctx.opt_ctx.flash.bytes_write * 100 / ctx.opt_ctx.flash.len;
+	if (progress - ctx.opt_ctx.flash.progress >= 5){
+		ctx.opt_ctx.flash.progress = progress;
+		modbus_reg_update(MB_REG_ADDR_OPT_PROGRESS, progress);
+	}
+	
 	crc16_update(&ctx.opt_ctx.flash.flash_crc_ctx, buf, bytes_write);
 	ctx.opt_ctx.flash.bytes_write += bytes_write;
+	
 	if (ctx.opt_ctx.flash.bytes_write >= ctx.opt_ctx.flash.len){
 		
 		crc_flash = crc16_value(&ctx.opt_ctx.flash.flash_crc_ctx);;
 		if (crc_flash != ctx.opt_ctx.flash.data_crc){
-			upgrade_opt_finish(UPGRADE_OPT_ERR_CRC);
+			upgrade_opt_finish(UPGRADE_OPT_ERR_VERIFY);
 			return;
 		}
 		ctx.bytes_write += ctx.opt_ctx.flash.len;
@@ -245,13 +320,34 @@ void upgrade_flash_next(){
 	}
 }
 
-void upgrade_erase_start(){
+int upgrade_erase_start(){
+	int image_size = 0;
 	ctx.opt_ctx.erase.bytes_erased = 0;
 	ctx.opt_ctx.erase.progress = 0;
 	modbus_reg_update(MB_REG_ADDR_OPT_CODE, UPGRADE_OPT_ERASE);
 	modbus_reg_update(MB_REG_ADDR_OPT_STATE, UPGRADE_OPT_S_EXEC);
 	modbus_reg_update(MB_REG_ADDR_OPT_PROGRESS, ctx.opt_ctx.erase.progress);
+	image_size = modbus_reg_get(MB_REG_ADDR_DATA_LEN_H);
+	image_size <<= 16;
+	image_size += modbus_reg_get(MB_REG_ADDR_DATA_LEN_H);
+	if (image_size > BACKUP_PART_SIZE){
+		upgrade_opt_finish(UPGRADE_OPT_ERR_INVALID_LEN);
+	}
+	ctx.image_size = image_size;
+	return 0;
 }
+
+int upgrade_verify_start(){
+	memset(&ctx.opt_ctx.verify, 0, sizeof(upgrade_verify_ctx_t));
+	const uint8_t data_buf = modbus_reg_buf_addr(MB_REG_ADDR_BUF_START);
+	memcpy(ctx.opt_ctx.verify.image_md5, data_buf, 16);
+	MD5Init(&ctx.opt_ctx.verify.md5_ctx);
+	modbus_reg_update(MB_REG_ADDR_OPT_CODE, UPGRADE_OPT_VERIFY);
+	modbus_reg_update(MB_REG_ADDR_OPT_STATE, UPGRADE_OPT_S_EXEC);
+	modbus_reg_update(MB_REG_ADDR_OPT_PROGRESS, ctx.opt_ctx.verify.progress);
+	return 0;
+}
+
 void upgrade_erase_next(){
 	uint32_t addr;
 	uint16_t progress;
@@ -263,18 +359,48 @@ void upgrade_erase_next(){
 		return;
 	}
 	erase_ctx->bytes_erased += EEPROM_BLOCK_SIZE;
-	if (erase_ctx->bytes_erased >= BACKUP_PART_SIZE){
+	if (erase_ctx->bytes_erased >= ctx.image_size){
 		upgrade_opt_finish(UPGRADE_OPT_OK);
 		return;
 	}
-	progress = erase_ctx->bytes_erased * 100 / BACKUP_PART_SIZE;
+	progress = erase_ctx->bytes_erased * 100 / ctx.image_size;
 	if (progress - ctx.opt_ctx.erase.progress >= 5){
 		ctx.opt_ctx.erase.progress = progress;
 		modbus_reg_update(MB_REG_ADDR_OPT_PROGRESS, progress);
 	}
 }
 
+static int upgrade_verify_next(){
+	uint8_t buf[EEPROM_PAGE_SIZE] = {0};
+	upgrade_verify_ctx_t *verify_ctx = &ctx.opt_ctx.verify;
+	int bytes_remain = ctx.image_size - verify_ctx->bytes_verified;
+	int bytes_read = MIN(EEPROM_PAGE_SIZE, bytes_remain);
+	FLASH_ROM_READ(BACKUP_ADDR_START + verify_ctx->bytes_verified, 
+		(void *)buf, bytes_read);
+	MD5Update(&verify_ctx->md5_ctx, buf, bytes_read);
+	verify_ctx->bytes_verified += bytes_read;
+	if (verify_ctx->bytes_verified >= ctx.image_size){
+		uint8_t md5[16] = {0};
+		appinfo_t *appinfo = (appinfo_t *)buf;
+		MD5Final(md5, &verify_ctx->md5_ctx);
+		if (memcmp(md5, verify_ctx->image_md5, 16)){
+			upgrade_opt_finish(UPGRADE_OPT_ERR_VERIFY);
+			return -1;
+		}
+		FLASH_ROM_READ(BACKUP_APPINFO_ADDR, buf, sizeof(appinfo_t));
+		ctx.otainfo.ota_size = ctx.image_size;
+		ctx.otainfo.ota_version = appinfo->version;
+		memcpy(ctx.otainfo.ota_md5, md5, 16);
+		st_update_ota(&ctx.otainfo);
+		upgrade_opt_finish(UPGRADE_OPT_OK);
+		return 0;
+	}
+	return 0;
+}
+
 void upgrade_exec_next(){
+	uint32_t irq = 0;
+	SYS_DisableAllIrq(&irq);
 	switch(ctx.opt_code){
 		case UPGRADE_OPT_ERASE:
 			upgrade_erase_next();
@@ -285,6 +411,7 @@ void upgrade_exec_next(){
 		default:
 			break;
 	}
+	SYS_RecoverIrq(irq);
 }
 void upgrade_reset(){
 	modbus_deinit();
@@ -314,9 +441,6 @@ void upgrade_exec_start(){
 		case UPGRADE_OPT_FLASH:
 			upgrade_flash_start();
 			break;
-		case UPGRADE_OPT_REFRESH:
-			upgrade_refresh();
-			break;
 		default:
 			upgrade_opt_finish(UPGRADE_OPT_ERR_INVALID_OPT);
 			break;
@@ -324,7 +448,48 @@ void upgrade_exec_start(){
 	ctx.flag_opt = 0;
 }
 
+static int upgrade_copy_app(){
+	uint8_t buf[EEPROM_PAGE_SIZE];
+	uint32_t bytes_handled = 0;
+	uint32_t bytes_read = 0;
+	while(bytes_handled < ctx.otainfo.ota_size){
+		FLASH_ROM_ERASE(APP_ADDR_START + bytes_handled, EEPROM_BLOCK_SIZE);
+		bytes_handled += EEPROM_BLOCK_SIZE;
+	}
+	bytes_handled = 0;
+	while(bytes_handled < ctx.otainfo.ota_size){
+		bytes_read = MIN(EEPROM_PAGE_SIZE, ctx.otainfo.ota_size - bytes_handled);
+		FLASH_ROM_READ(APP_ADDR_START + bytes_handled, buf, bytes_read);
+		if (FLASH_ROM_WRITE(APP_ADDR_START + bytes_handled, buf, bytes_read)){
+			goto fail;
+		}
+		if (FLASH_ROM_VERIFY(APP_ADDR_START + bytes_handled, buf, bytes_read)){
+			goto fail;
+		}
+		bytes_handled += bytes_read;
+	}
+	ctx.otainfo.app_size = ctx.otainfo.ota_size;
+	ctx.otainfo.app_version = ctx.otainfo.ota_version;
+	memcpy(ctx.otainfo.app_md5, ctx.otainfo.ota_md5, 16);
+
+	st_update_ota(&ctx.otainfo);
+	return 0;
+	
+fail:
+	return -1;
+}
+static void upgrade_jumpapp(){
+	uint8_t need_copy = 0;
+	PFIC_DisableAllIRQ();
+	modbus_deinit();
+	if (ctx.otainfo.ota_version != ctx.otainfo.app_version){
+		upgrade_copy_app();
+	}
+	GOTO_AP();
+}
+
 void upgrade_run(){
+	uint32_t irq = 0;
 	modbus_frame_check();
 	if (modbus_is_receiving()){
 		return;
@@ -338,9 +503,7 @@ void upgrade_run(){
 				if (ctx.app_available && (!ctx.flag_standby) && 
 					worktime_since(ctx.lasttime) > 3000)
 				{
-					PFIC_DisableAllIRQ();
-					modbus_deinit();
-					GOTO_AP();
+					upgrade_jumpapp();
 				}
 			}
 			break;

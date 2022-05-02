@@ -39,10 +39,10 @@ uint16_t modbus_reg_get(mb_reg_addr_t addr)
  */
 const uint8_t *modbus_reg_buf_addr(mb_reg_addr_t addr){
 	if (addr >= MB_REG_ADDR_RO_BASE && addr < MB_REG_ADDR_RO_MAX){
-		return &mb_ro_regs[addr - MB_REG_ADDR_RO_BASE];
+		return (const uint8_t *)&mb_ro_regs[addr - MB_REG_ADDR_RO_BASE];
 	}
 	if (addr >= MB_REG_ADDR_CONFIG_BASE && addr < MB_REG_ADDR_CONFIG_MAX){
-		return &mb_config_regs[addr - MB_REG_ADDR_CONFIG_BASE];
+		return (const uint8_t *)&mb_config_regs[addr - MB_REG_ADDR_CONFIG_BASE];
 	}
 	return NULL;
 }
@@ -137,7 +137,7 @@ ModbusError modbus_reg_callback(void *ctx,
 	return 0;
 }
 
-void modbus_reg_update_uid(uint8_t *uid, uint16_t len){
+void modbus_reg_update_uid(const uint8_t *uid, uint16_t len){
 	uint8_t *buf = (uint8_t *)(mb_ro_regs + MB_REG_ADDR_UID_7);
 	uint16_t maxlen = (MB_REG_ADDR_UID_0 - MB_REG_ADDR_UID_7 + 1) * 2;
 	if (len < maxlen){
