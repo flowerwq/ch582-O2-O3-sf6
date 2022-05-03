@@ -7,6 +7,9 @@
 #define OLED_X_MAX	128
 #define OLED_Y_MAX	64
 
+#define OLED_X_VALID(x)	((x) >= 0 && (x) < OLED_X_MAX)
+#define OLED_Y_VALID(y)	((y) >= 0 && (y) < OLED_Y_MAX)
+
 //-----------------OLED端口定义---------------- 
 #define OLED_SCL_INIT()	{GPIOB_ModeCfg(GPIO_Pin_0, GPIO_ModeOut_PP_20mA);}
 #define OLED_SCL_Clr() GPIOB_ResetBits(GPIO_Pin_0)//SCL
@@ -43,6 +46,13 @@
 #define OLED_CMD  0	//写命令
 #define OLED_DATA 1	//写数据
 
+typedef struct oled_area {
+	uint8_t x;
+	uint8_t y;
+	uint8_t width;
+	uint8_t height;
+}oled_area_t;
+
 void OLED_ClearPoint(uint8_t x,uint8_t y);
 void OLED_ColorTurn(uint8_t i);
 void OLED_DisplayTurn(uint8_t i);
@@ -62,6 +72,7 @@ void OLED_ShowChinese(uint8_t x,uint8_t y,uint8_t num,uint8_t size1,uint8_t mode
 void OLED_ScrollDisplay(uint8_t num,uint8_t space,uint8_t mode);
 void OLED_ShowPicture(uint8_t x,uint8_t y,uint8_t sizex,uint8_t sizey,uint8_t BMP[],uint8_t mode);
 void OLED_Init(void);
+void OLED_clear_buffer(oled_area_t *area);
 
 #endif
 

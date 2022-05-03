@@ -8,6 +8,7 @@
 #include "uid.h"
 #include "appinfo.h"
 #include "storage.h"
+#include "display.h"
 
 typedef enum upgrade_status{
 	UPGRADE_S_INIT = 0,
@@ -316,6 +317,8 @@ void upgrade_flash_next(){
 			return;
 		}
 		ctx.bytes_write += ctx.opt_ctx.flash.len;
+		progress = ctx.bytes_write * 100 / ctx.image_size;
+		display_printline(DISPLAY_LAST_LINE, "Recv:%d%%", progress);
 		upgrade_opt_finish(UPGRADE_OPT_OK);
 	}
 }
@@ -334,17 +337,19 @@ int upgrade_erase_start(){
 		upgrade_opt_finish(UPGRADE_OPT_ERR_INVALID_LEN);
 	}
 	ctx.image_size = image_size;
+	display_printline(DISPLAY_LAST_LINE, "Eraseing ...");
 	return 0;
 }
 
 int upgrade_verify_start(){
 	memset(&ctx.opt_ctx.verify, 0, sizeof(upgrade_verify_ctx_t));
-	const uint8_t data_buf = modbus_reg_buf_addr(MB_REG_ADDR_BUF_START);
+	const uint8_t *data_buf = modbus_reg_buf_addr(MB_REG_ADDR_BUF_START);
 	memcpy(ctx.opt_ctx.verify.image_md5, data_buf, 16);
 	MD5Init(&ctx.opt_ctx.verify.md5_ctx);
 	modbus_reg_update(MB_REG_ADDR_OPT_CODE, UPGRADE_OPT_VERIFY);
 	modbus_reg_update(MB_REG_ADDR_OPT_STATE, UPGRADE_OPT_S_EXEC);
 	modbus_reg_update(MB_REG_ADDR_OPT_PROGRESS, ctx.opt_ctx.verify.progress);
+	display_printline(DISPLAY_LAST_LINE, "Verifing ...");
 	return 0;
 }
 
@@ -361,12 +366,14 @@ void upgrade_erase_next(){
 	erase_ctx->bytes_erased += EEPROM_BLOCK_SIZE;
 	if (erase_ctx->bytes_erased >= ctx.image_size){
 		upgrade_opt_finish(UPGRADE_OPT_OK);
+		display_printline(DISPLAY_LAST_LINE, "Erase finish");
 		return;
 	}
 	progress = erase_ctx->bytes_erased * 100 / ctx.image_size;
 	if (progress - ctx.opt_ctx.erase.progress >= 5){
 		ctx.opt_ctx.erase.progress = progress;
 		modbus_reg_update(MB_REG_ADDR_OPT_PROGRESS, progress);
+		display_printline(DISPLAY_LAST_LINE, "Erase: %d%%", progress);
 	}
 }
 
@@ -393,6 +400,7 @@ static int upgrade_verify_next(){
 		memcpy(ctx.otainfo.ota_md5, md5, 16);
 		st_update_ota(&ctx.otainfo);
 		upgrade_opt_finish(UPGRADE_OPT_OK);
+		display_printline(DISPLAY_LAST_LINE, "Verify finish");
 		return 0;
 	}
 	return 0;
@@ -452,6 +460,7 @@ static int upgrade_copy_app(){
 	uint8_t buf[EEPROM_PAGE_SIZE];
 	uint32_t bytes_handled = 0;
 	uint32_t bytes_read = 0;
+	display_printline(DISPLAY_LAST_LINE, "Copy app ...");
 	while(bytes_handled < ctx.otainfo.ota_size){
 		FLASH_ROM_ERASE(APP_ADDR_START + bytes_handled, EEPROM_BLOCK_SIZE);
 		bytes_handled += EEPROM_BLOCK_SIZE;
@@ -496,6 +505,10 @@ void upgrade_run(){
 	}
 	switch(ctx.status){
 		case UPGRADE_S_INIT:
+			if (!ctx.app_available && !ctx.flag_standby){
+				ctx.flag_standby = 1;
+				display_printline(DISPLAY_LAST_LINE, "Standby ...");
+			}
 		case UPGRADE_S_IDLE:
 			if (ctx.flag_opt){
 				upgrade_exec_start();
@@ -514,3 +527,11 @@ void upgrade_run(){
 			break;
 	}
 }
+
+int upgrade_app_available(){
+	return ctx.app_available;
+}
+int upgrade_app_version(){
+	return ctx.app_available ? ctx.appinfo.version : 0;
+}
+

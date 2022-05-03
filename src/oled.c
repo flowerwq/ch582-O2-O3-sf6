@@ -4,6 +4,18 @@
 #include "oledfont.h"  	 
 #include "CH58x_common.h"
 
+//OLED的显存
+//存放格式如下.
+//[0]0 1 2 3 ... 127	
+//[1]0 1 2 3 ... 127	
+//[2]0 1 2 3 ... 127	
+//[3]0 1 2 3 ... 127	
+//[4]0 1 2 3 ... 127	
+//[5]0 1 2 3 ... 127	
+//[6]0 1 2 3 ... 127	
+//[7]0 1 2 3 ... 127 
+
+//OLED_GRAM[X][Y]
 static uint8_t OLED_GRAM[144][8];
 static uint8_t flag_refresh = 0;
 //反显函数
@@ -98,11 +110,53 @@ void OLED_Clear(void)
 	{
 	   	for(n = 0;n < 128; n++)
 		{
-		 OLED_GRAM[n][i]=0;//清除所有数据
+			OLED_GRAM[n][i]=0;//清除所有数据
 		}
 	}
 	flag_refresh = 1;
 	OLED_Refresh();//更新显示
+}
+
+void OLED_clear_buffer(oled_area_t *area)
+{
+	uint8_t i,n;
+	uint8_t mask = 0;
+	uint8_t idx_y_s, idx_y_e;
+	uint8_t bit_s, bit_e;
+
+	if (0 == area->width || 0 == area->height){
+		return ;
+	}
+	if (!OLED_X_VALID(area->x) || !OLED_Y_VALID(area->y) ||
+		!OLED_X_VALID(area->x + area->width) || 
+		!OLED_Y_VALID(area->y + area->height))
+	{
+		return ;
+	}
+	
+	idx_y_s = area->y / 8;
+	bit_s = area->y % 8;
+	
+	idx_y_e = (area->y + area->height) / 8;
+	bit_e = (area->y + area->height) % 8;
+	
+	//Y
+	for(i = idx_y_s; i <= idx_y_e; i++)
+	{
+		mask = 0;
+		if (i == idx_y_s){
+			mask |= ~(0xff << bit_s);
+		}
+		if (i == idx_y_e){
+			mask |= 0xff << (bit_e + 1);
+		}
+		//X
+	   	for(n = 0;n < 128; n++)
+		{
+			OLED_GRAM[n][i] &= mask;//清除数据
+		}
+	}
+	flag_refresh = 1;
 }
 
 //画点 

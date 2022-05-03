@@ -91,8 +91,10 @@
 									<listOptionValue builtIn="false" value="--print-memory-usage"/>
 								</option>
 								<option id="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.iqmath.745570960" name="Use iqmath(-lIQmath_RV32)" superClass="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.iqmath" value="false" valueType="boolean"/>
-								<option id="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.printf.745570960" name="Use wchprint(-lprintf)" superClass="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.printf" value="false" valueType="boolean"/>
-								<option id="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.printfloat.745570960" name="Use wchprintfloat(-lprintfloat)" superClass="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.printfloat" value="false" valueType="boolean"/>
+								<option id="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.printf.745570960" name="Use wchprint(-lprintf)" superClass="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.printf" value="true" valueType="boolean"/>
+								<option id="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.printfloat.745570960" name="Use wchprintfloat(-lprintfloat)" superClass="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.printfloat" useByScannerDiscovery="false" value="false" valueType="boolean"/>
+								<option id="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.useprintffloat.1842446505" name="Use float with nano printf (-u _printf_float)" superClass="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.useprintffloat" useByScannerDiscovery="false" value="false" valueType="boolean"/>
+								<option id="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.usescanffloat.579295953" name="Use float with nano scanf (-u _scanf_float)" superClass="ilg.gnumcueclipse.managedbuild.cross.riscv.option.c.linker.usescanffloat" useByScannerDiscovery="false" value="false" valueType="boolean"/>
 								<inputType id="ilg.gnumcueclipse.managedbuild.cross.riscv.tool.c.linker.input.1859223768" superClass="ilg.gnumcueclipse.managedbuild.cross.riscv.tool.c.linker.input">
 									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>
 									<additionalInput kind="additionalinput" paths="$(LIBS)"/>

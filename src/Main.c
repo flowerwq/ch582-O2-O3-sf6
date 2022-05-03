@@ -7,13 +7,16 @@
  * Copyright (c) 2021 Nanjing Qinheng Microelectronics Co., Ltd.
  * SPDX-License-Identifier: Apache-2.0
  *******************************************************************************/
-
+#include "stdio.h"
 #include "CH58x_common.h"
 #include "worktime.h"
 #include "storage.h"
 #include "upgrade.h"
 #include "oled.h"
 #include "bmp.h"
+#include "display.h"
+#include "version.h"
+
 /*********************************************************************
  * @fn      main
  *
@@ -67,8 +70,9 @@ int reset_dump(){
 }
 int main()
 {
-    uint8_t len;
+    uint32_t appversion;
 	worktime_t worktime = 0;
+	char buf[DISPLAY_LINE_LEN + 1];
     SetSysClock(CLK_SOURCE_PLL_60MHz);
 	worktime_init();
 	
@@ -81,30 +85,36 @@ int main()
 	reset_dump();
 	PRINT("app start ...\r\n");
 	uuid_dump();
+	
+	OLED_Init();
+	OLED_ShowPicture(32, 0, 64, 64, smail_64x64_1, 1);
+	OLED_Refresh();
+	
+	display_init();
 	st_init();
 	upgrade_init();
-	OLED_Init();
-	OLED_ShowString(0, 0, "Hi, Susie!", 16, 1);
-	OLED_Refresh();
-	DelayMs(1000);
-	OLED_ShowString(0, 16, "Let's hang out ", 16, 1);
-	OLED_ShowString(0, 32, "when you free !", 16, 1);
-	OLED_Refresh();
-	DelayMs(1000);
+
+	while(worktime_since(worktime) < 1000){
+		__nop();
+	}
 	OLED_Clear();
+	DISPLAY_PRINT("Boot:%s", CURRENT_VERSION_STR());
+	if (upgrade_app_available()){
+		appversion = upgrade_app_version();
+		version_str(appversion, buf, DISPLAY_LINE_LEN);
+		DISPLAY_PRINT("APP:%s", buf);
+	}else{
+		DISPLAY_PRINT("APP:none");
+	}
 	PRINT("main loop start ...\r\n");
     while(1){
 		OLED_Refresh();
 		upgrade_run();
 		st_run();
-		if (worktime_since(worktime) > 1000){
-			worktime = worktime_get();
-			if (worktime % 2){
-				OLED_ShowPicture(32, 0, 64, 64, smail_64x64_2, 1);
-			}else{
-				OLED_ShowPicture(32, 0, 64, 64, smail_64x64_1, 1);
-			}
-		}
+//		if (worktime_since(worktime) >= 1000){
+//			worktime = worktime_get();
+//			display_printf("ts:%u", (uint32_t)worktime);
+//		}
 	}
 }
 

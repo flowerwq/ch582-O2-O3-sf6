@@ -235,9 +235,12 @@ void UART2_IRQHandler(void)
 }
 
 int modbus_uart_init(){
+	GPIOA_ModeCfg(GPIO_Pin_6, GPIO_ModeIN_PU);
+	GPIOA_ModeCfg(GPIO_Pin_7, GPIO_ModeOut_PP_20mA);
 	UART2_DefInit();
 	UART2_BaudRateCfg(MB_BAUDRATE);
 	UART2_ByteTrigCfg(UART_1BYTE_TRIG);
+	PFIC_EnableIRQ(UART2_IRQn);
 	UART2_INTCfg(ENABLE, RB_IER_RECV_RDY | RB_IER_LINE_STAT);
 	return 0;
 }
@@ -275,14 +278,20 @@ void modbus_frame_check(){
 	if (MODBUS_S_RECV_FINISH == mb_slave_ctx.status){
 		mb_ts_last = worktime_get()/1000;
 		if (!mb_slave_ctx.flag_frame_err){
+			PRINT("modbus parse ...");
 			err = modbusParseRequestRTU( &mb_slave_ctx.slave, 
 				mb_slave_ctx.address, mb_slave_ctx.req_buf, mb_slave_ctx.req_len);
+			if (MODBUS_OK != modbusGetErrorCode(err)){
+				PRINT("modbus parse err(%02x)", modbusGetErrorCode(err));
+			}
 			if (MODBUS_ERROR_ADDRESS != modbusGetErrorCode(err)){
 				if (modbusSlaveGetResponseLength(&mb_slave_ctx.slave) > 0){
 					modbus_uart_send(modbusSlaveGetResponse(&mb_slave_ctx.slave), 
 						modbusSlaveGetResponseLength(&mb_slave_ctx.slave));
 				}
 			}
+		}else{
+			PRINT("modbus frame err");
 		}
 		modbus_slave_set_idle();
 	}

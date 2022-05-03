@@ -3,5 +3,7 @@
 
 void upgrade_init();
 void upgrade_run();
+int upgrade_app_available();
+int upgrade_app_version();
 
 #endif
