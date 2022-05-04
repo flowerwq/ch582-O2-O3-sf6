@@ -4,7 +4,9 @@
 //#define LIGHTMODBUS_IMPL	//Include implementation
 #define LIGHTMODBUS_SLAVE	//Includes slave part of the library
 //#define LIGHTMODBUS_FxxS	//Adds function xx to modbusSlaveDefaultFunctions
-#define LIGHTMODBUS_F03S
+#define LIGHTMODBUS_F03S	//03:read holding registers
+#define LIGHTMODBUS_F06S	//06:write single register
+#define LIGHTMODBUS_F16S	//16:write multipule registers
 
 //#define LIGHTMODBUS_SLAVE_FULL	//Includes slave part of the library and adds all functions to modbusSlaveDefaultFunctions
 //#define LIGHTMODBUS_MASTER		//Includes master part of the library

@@ -6,11 +6,13 @@ Program=true
 Verify=true
 Reset=true
 
-Vendor=WCH
-Link=WCH-Link
 Toolchain=RISC-V
 Series=CH58X
 Description=ROM(byte): 448K, SRAM(byte): 32K, CHIP PINS: 48, GPIO PORTS: 40.\nCH583 is a 32-bit RISC microcontroller integrating ble wireless communication. On chip integrated 2Mbps lower-power Bluetooth ble communication module 2 full speed USB hosts and device controllers and transceivers, 2SPIs, 4 serial ports, ADC touch key detection module, RTC and other rich peripheral resources.
 
 PeripheralVersion=1.1
+
+Vendor=WCH
 MCU=CH582M
+Mcu Type=
+Link=WCH-Link

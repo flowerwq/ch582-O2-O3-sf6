@@ -101,7 +101,7 @@ typedef struct upgrade_context{
 #define GOTO_AP()	((void (*)(void))APP_ADDR_START)()
 
 static upgrade_ctx_t ctx;
-static uint16_t upgrade_magic[4] = {0x4367U, 0x6366U, 0x426F, 0x6F74};
+static uint16_t upgrade_magic[4] = {0x4367U, 0x6366U, 0x426FU, 0x6F74U};
 static uint8_t magic_cnt = 0;
 int8_t mb_reg_after_write(mb_reg_addr_t addr, uint16_t value){
 	switch(addr){
@@ -195,10 +195,8 @@ void upgrade_read_appinfo(){
 	ctx.app_available = 0;
 }
 void upgrade_init(){
-	uint32_t buflen;
 	uint8_t uid[16] = {0};
 	mb_callback_t mb_cb = {mb_reg_before_write, mb_reg_after_write, NULL, NULL};
-	buflen = MB_REG_ADDR_BUF_MAX - MB_REG_ADDR_BUF_START;
 	memset(&ctx, 0, sizeof(upgrade_ctx_t));
 	ctx.lasttime = worktime_get();
 	modbus_init(&mb_cb);
@@ -208,8 +206,8 @@ void upgrade_init(){
 	upgrade_read_appinfo();
 	
 	modbus_reg_update(MB_REG_ADDR_BLOCK_SIZE, EEPROM_BLOCK_SIZE);
-	modbus_reg_update(MB_REG_ADDR_BUF_LEN_H, buflen >> 16);
-	modbus_reg_update(MB_REG_ADDR_BUF_LEN_L, buflen);
+	modbus_reg_update(MB_REG_ADDR_BUF_LEN_H, MB_REG_DATA_BUF_SIZE >> 16);
+	modbus_reg_update(MB_REG_ADDR_BUF_LEN_L, MB_REG_DATA_BUF_SIZE);
 	modbus_reg_update_uid(get_uid(), UID_LENGTH);
 }
 

@@ -180,7 +180,8 @@ int modbus_slave_init(mb_callback_t *callback){
 		memcpy(&mb_slave_ctx.callback, callback, sizeof(mb_callback_t));
 	}
 	ModbusErrorInfo err = modbusSlaveInit(&mb_slave_ctx.slave, 
-		register_callback, NULL, modbusStaticAllocator, NULL, 0);
+		register_callback, NULL, modbusStaticAllocator, 
+		modbusSlaveDefaultFunctions, modbusSlaveDefaultFunctionCount);
 	if (!modbusIsOk(err)){
 		return -1;
 	}
@@ -210,14 +211,14 @@ void UART2_IRQHandler(void)
         }
 
         case UART_II_RECV_RDY: // 数据达到设置触发点
-            while(R8_UART2_FCR)
+            while(R8_UART2_RFC)
             {
                 slave_recv(UART2_RecvByte());
             }
             break;
 
         case UART_II_RECV_TOUT: // 接收超时，暂时一帧数据接收完成
-            while(R8_UART2_FCR)
+            while(R8_UART2_RFC)
             {
                 slave_recv(UART2_RecvByte());
             }
@@ -237,11 +238,12 @@ void UART2_IRQHandler(void)
 int modbus_uart_init(){
 	GPIOA_ModeCfg(GPIO_Pin_6, GPIO_ModeIN_PU);
 	GPIOA_ModeCfg(GPIO_Pin_7, GPIO_ModeOut_PP_20mA);
+	GPIOA_SetBits(GPIO_Pin_7);
 	UART2_DefInit();
 	UART2_BaudRateCfg(MB_BAUDRATE);
 	UART2_ByteTrigCfg(UART_1BYTE_TRIG);
-	PFIC_EnableIRQ(UART2_IRQn);
 	UART2_INTCfg(ENABLE, RB_IER_RECV_RDY | RB_IER_LINE_STAT);
+	PFIC_EnableIRQ(UART2_IRQn);
 	return 0;
 }
 int modbus_uart_send(uint8_t *buf, int len){
