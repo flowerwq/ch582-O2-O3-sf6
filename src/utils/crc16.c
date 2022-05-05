@@ -103,7 +103,7 @@ uint16_t crc16_value(crc16_ctx_t *ctx){
 	if (!ctx || ctx->len <= 0){
 		return 0;
 	}
-	return ctx->crcdata.value;
+	return ctx->crcdata.unit.high * 0xffU + ctx->crcdata.unit.low;
 }
 
 uint16_t crc16(uint8_t *buf, uint16_t len){

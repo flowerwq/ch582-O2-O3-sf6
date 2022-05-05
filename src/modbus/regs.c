@@ -94,7 +94,7 @@ ModbusError modbus_reg_callback(void *ctx,
 	case MODBUS_REGQ_R_CHECK:
 		if (MODBUS_HOLDING_REGISTER == args->type){
 			if(!modbus_reg_r_check(args->index)){
-				return MODBUS_ERROR_ADDRESS;
+				return MODBUS_ERROR_INDEX;
 			}
 			return MODBUS_OK;
 		}else{
@@ -110,7 +110,10 @@ ModbusError modbus_reg_callback(void *ctx,
 		break;
 	case MODBUS_REGQ_W_CHECK:
 		if (MODBUS_HOLDING_REGISTER == args->type){
-			return modbus_reg_w_check(args->index);
+			if (!modbus_reg_w_check(args->index)){
+				return MODBUS_ERROR_INDEX;
+			}
+			return MODBUS_OK;
 		}else{
 			return MODBUS_ERROR_FUNCTION;
 		}
@@ -151,5 +154,8 @@ void modbus_regs_init(){
 	memset(mb_config_regs, 0, sizeof(mb_config_regs));
 	modbus_reg_update(MB_REG_ADDR_VERSION_H, CURRENT_VERSION() >> 16);
 	modbus_reg_update(MB_REG_ADDR_VERSION_L, CURRENT_VERSION());
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	modbus_reg_update(MB_REG_ADDR_ENDIAN, 1);
+#endif
 }
 

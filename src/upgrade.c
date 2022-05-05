@@ -83,16 +83,16 @@ typedef struct upgrade_context{
 	MD5_CTX md5_ctx;
 } upgrade_ctx_t;
 
-#define BOOT_PART_SIZE	(16 * 1024)
+#define BOOT_PART_SIZE	(32 * 1024)
 #define BOOT_BLOCK_NUM	(BOOT_PART_SIZE / EEPROM_BLOCK_SIZE)
 
 #define APP_ADDR_START	BOOT_PART_SIZE
-#define APP_PART_SIZE	(216 * 1024)
+#define APP_PART_SIZE	((FLASH_ROM_MAX_SIZE - BOOT_PART_SIZE) / 2)
 #define APP_ADDR_END	(APP_ADDR_START + APP_PART_SIZE)
 #define APP_BLOCK_NUM	(APP_PART_SIZE / EEPROM_BLOCK_SIZE)
 
 #define BACKUP_ADDR_START	APP_ADDR_END
-#define BACKUP_PART_SIZE	(216 * 1024)
+#define BACKUP_PART_SIZE	APP_PART_SIZE
 #define BACKUP_ADDR_END		(BACKUP_ADDR_START + BACKUP_PART_SIZE)
 #define BACKUP_BLOCK_NUM	(BACKUP_PART_SIZE / EEPROM_BLOCK_SIZE)
 
@@ -137,6 +137,7 @@ int8_t mb_reg_before_write(mb_reg_addr_t addr, uint16_t value){
 				magic_cnt ++;
 				if (magic_cnt > 3){
 					ctx.flag_standby = 1;
+					modbus_reg_update(MB_REG_ADDR_STANDBY, 1);
 				}
 			}
 			break;
@@ -223,6 +224,7 @@ void upgrade_opt_finish(upgrade_opt_err_t err){
 }
 
 void upgrade_flash_start(){
+	uint16_t crc = 0;
 	modbus_reg_update(MB_REG_ADDR_OPT_CODE, UPGRADE_OPT_FLASH);
 	modbus_reg_update(MB_REG_ADDR_OPT_STATE, UPGRADE_OPT_S_EXEC);
 	ctx.opt_ctx.flash.len = modbus_reg_get(MB_REG_ADDR_DATA_LEN_H);
@@ -239,8 +241,8 @@ void upgrade_flash_start(){
 	ctx.opt_ctx.flash.addr = BACKUP_ADDR_START + ctx.bytes_write;
 	ctx.opt_ctx.flash.data_crc = modbus_reg_get(MB_REG_ADDR_DATA_CRC);
 	ctx.opt_ctx.flash.data_buf = modbus_reg_buf_addr(MB_REG_ADDR_BUF_START);
-	if (crc16(ctx.opt_ctx.flash.data_buf, ctx.opt_ctx.flash.len) != 
-		ctx.opt_ctx.flash.data_crc)
+	crc = crc16(ctx.opt_ctx.flash.data_buf, ctx.opt_ctx.flash.len);
+	if (crc != ctx.opt_ctx.flash.data_crc)
 	{
 		upgrade_opt_finish(UPGRADE_OPT_ERR_VERIFY);
 		return;
@@ -505,6 +507,7 @@ void upgrade_run(){
 		case UPGRADE_S_INIT:
 			if (!ctx.app_available && !ctx.flag_standby){
 				ctx.flag_standby = 1;
+				modbus_reg_update(MB_REG_ADDR_STANDBY, 1);
 				display_printline(DISPLAY_LAST_LINE, "Standby ...");
 			}
 		case UPGRADE_S_IDLE:

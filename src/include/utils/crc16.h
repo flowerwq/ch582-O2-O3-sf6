@@ -7,13 +7,13 @@ struct crc16_unit{
 	uint8_t low;
 };
 
-union crc16_data{
+struct crc16_data{
 	struct crc16_unit unit;
 	uint16_t value;
 };
 
 typedef struct crc16_context{
-	union crc16_data crcdata;
+	struct crc16_data crcdata;
 	uint16_t len;
 }crc16_ctx_t;
 
