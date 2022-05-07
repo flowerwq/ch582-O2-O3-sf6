@@ -280,7 +280,6 @@ void modbus_frame_check(){
 	if (MODBUS_S_RECV_FINISH == mb_slave_ctx.status){
 		mb_ts_last = worktime_get()/1000;
 		if (!mb_slave_ctx.flag_frame_err){
-			PRINT("modbus parse ...");
 			err = modbusParseRequestRTU( &mb_slave_ctx.slave, 
 				mb_slave_ctx.address, mb_slave_ctx.req_buf, mb_slave_ctx.req_len);
 			if (MODBUS_OK != modbusGetErrorCode(err)){

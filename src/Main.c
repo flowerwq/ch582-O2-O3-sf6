@@ -83,7 +83,7 @@ int main()
     UART1_DefInit();
 
 	reset_dump();
-	PRINT("app start ...\r\n");
+	PRINT("start ...\r\n");
 	uuid_dump();
 	
 	OLED_Init();
@@ -105,6 +105,13 @@ int main()
 		DISPLAY_PRINT("APP:%s", buf);
 	}else{
 		DISPLAY_PRINT("APP:none");
+	}
+	if (upgrade_backup_available()){
+		appversion = upgrade_backup_version();
+		version_str(appversion, buf, DISPLAY_LINE_LEN);
+		DISPLAY_PRINT("BAK:%s", buf);
+	}else{
+		DISPLAY_PRINT("BAK:none");
 	}
 	PRINT("main loop start ...\r\n");
     while(1){

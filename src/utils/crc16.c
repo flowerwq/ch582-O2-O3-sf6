@@ -103,9 +103,14 @@ uint16_t crc16_value(crc16_ctx_t *ctx){
 	if (!ctx || ctx->len <= 0){
 		return 0;
 	}
-	return ctx->crcdata.unit.high * 0xffU + ctx->crcdata.unit.low;
+	return ctx->crcdata.value;
 }
-
+/**
+ * @brief calculate 16-bit CRC(modbus)
+ * @param buf A pointer to the data to be processed
+ * @param len Number of bytes, starting at the `data` pointer, to process
+ * @return 16-bit CRC value
+ */
 uint16_t crc16(uint8_t *buf, uint16_t len){
 	crc16_ctx_t ctx;
 	crc16_init(&ctx);

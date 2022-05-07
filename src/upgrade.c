@@ -77,6 +77,8 @@ typedef struct upgrade_context{
 	uint8_t flag_standby;
 	uint8_t app_available;
 	appinfo_t appinfo;
+	uint8_t backup_available;
+	appinfo_t backup_appinfo;
 	upgrade_opt_ctx_t opt_ctx;
 	uint32_t image_size;
 	uint32_t bytes_write;
@@ -98,7 +100,8 @@ typedef struct upgrade_context{
 
 #define APPINFO_ADDR	(APP_ADDR_START + APPINFO_OFFSET)
 #define BACKUP_APPINFO_ADDR	(BACKUP_ADDR_START + APPINFO_OFFSET)
-#define GOTO_AP()	((void (*)(void))APP_ADDR_START)()
+#define GOTO_AP()	((void (*)(void))((uint32_t *)APP_ADDR_START))()
+
 
 static upgrade_ctx_t ctx;
 static uint16_t upgrade_magic[4] = {0x4367U, 0x6366U, 0x426FU, 0x6F74U};
@@ -147,53 +150,147 @@ int8_t mb_reg_before_write(mb_reg_addr_t addr, uint16_t value){
 	return 0;
 }
 
+
 /**
- *	@brief verify app image
+ *	@brief verify flash use MD5
+ *	@param addr	start address
  *	@param appsize size of app image
  *	@param app_md5	md5 hash of app image
  *	@return 0 - success, (!0) - failure
  *
  */
-static int upgrade_app_verify(int appsize, uint8_t *app_md5){
+static int upgrade_md5_verify(uint32_t addr, uint32_t len, uint8_t *app_md5){
 	MD5_CTX md5_ctx;
 	int bytes_verified = 0;
 	uint32_t bytes_read = 0;
 	uint8_t buf[EEPROM_PAGE_SIZE];
 	uint8_t md5[16] = {0};
 	MD5Init(&md5_ctx);
-	while(bytes_verified < appsize){
-		bytes_read = min(EEPROM_BLOCK_SIZE, appsize - bytes_verified);
-		FLASH_ROM_READ(APP_ADDR_START + bytes_verified, buf, bytes_read);
+	while(bytes_verified < len){
+		bytes_read = min(EEPROM_PAGE_SIZE, len - bytes_verified);
+		FLASH_ROM_READ(addr + bytes_verified, buf, bytes_read);
 		MD5Update(&md5_ctx, buf, bytes_read);
+		bytes_verified += bytes_read;
 	}
 	MD5Final(md5, &md5_ctx);
 	return memcmp(md5, app_md5, 16);
+}
+#define APP_VERIFY(size, md5)	upgrade_md5_verify(APP_ADDR_START, size, md5)
+#define BACKUP_VERIFY(size, md5)	upgrade_md5_verify(BACKUP_ADDR_START, size, md5)
+
+static int upgrade_is_image_valid(appinfo_t *img_info){
+	if (APP_MAGIC != img_info->magic){
+		goto fail;
+	}
+	if (ctx.app_available){
+		if (ctx.appinfo.vid != img_info->vid || 
+			ctx.appinfo.pid != img_info->pid)
+		{
+			goto fail;
+		}
+	}
+	return 1;
+fail:
+	return 0;
+}
+static int upgrade_copy_app(){
+	uint8_t buf[EEPROM_PAGE_SIZE];
+	uint32_t bytes_handled = 0;
+	uint32_t bytes_read = 0;
+	while(bytes_handled < ctx.otainfo.ota_size){
+		if(FLASH_ROM_ERASE(APP_ADDR_START + bytes_handled, EEPROM_PAGE_SIZE)){
+			PRINT("flash erase failed.\r\n");
+			goto fail;
+		}
+		bytes_handled += EEPROM_PAGE_SIZE;
+	}
+	bytes_handled = 0;
+	while(bytes_handled < ctx.otainfo.ota_size){
+		bytes_read = MIN(EEPROM_PAGE_SIZE, ctx.otainfo.ota_size - bytes_handled);
+		//read from backup part
+		FLASH_ROM_READ(BACKUP_ADDR_START + bytes_handled, buf, bytes_read);
+
+		//write to app part
+		if (FLASH_ROM_WRITE(APP_ADDR_START + bytes_handled, buf, bytes_read)){
+			PRINT("flash write failed.\r\n");
+			goto fail;
+		}
+		if (FLASH_ROM_VERIFY(APP_ADDR_START + bytes_handled, buf, bytes_read)){
+			PRINT("flash verify failed.\r\n");
+			goto fail;
+		}
+		bytes_handled += bytes_read;
+	}
+	ctx.otainfo.app_size = ctx.otainfo.ota_size;
+	ctx.otainfo.app_version = ctx.otainfo.ota_version;
+	memcpy(ctx.otainfo.app_md5, ctx.otainfo.ota_md5, 16);
+
+	st_update_ota(&ctx.otainfo);
+	return 0;
+	
+fail:
+	return -1;
+}
+static void upgrade_jumpapp(){
+	uint8_t need_copy = 0;
+	PFIC_DisableAllIRQ();
+	modbus_deinit();
+	if (ctx.otainfo.ota_version != ctx.otainfo.app_version){
+		upgrade_copy_app();
+	}
+	PRINT("jump to application ...\r\n");
+	GOTO_AP();
 }
 
 void upgrade_read_appinfo(){
 	uint8_t buf[ALIGN_4(sizeof(appinfo_t))] = {0};
 	appinfo_t *appinfo = (appinfo_t *)buf;
-	st_ota_t otainfo = {0};
-	st_get_ota(&otainfo);
+	uint8_t flag_ota_update = 0;
+	st_get_ota(&ctx.otainfo);
 	FLASH_ROM_READ(APPINFO_ADDR, buf, sizeof(appinfo_t));
+	ctx.app_available = 0;
+	ctx.backup_available = 0;
+	//app check
 	if (APP_MAGIC == appinfo->magic && 
-		appinfo->version == otainfo.app_version)
+		appinfo->version == ctx.otainfo.app_version)
 	{
-		if (0 == upgrade_app_verify(otainfo.app_size, otainfo.app_md5)){
-			modbus_reg_update(MB_REG_ADDR_APP_VID, appinfo->vid);
-			modbus_reg_update(MB_REG_ADDR_APP_PID, appinfo->pid);
-			modbus_reg_update(MB_REG_ADDR_APP_VERSION_H, appinfo->version >> 16);
-			modbus_reg_update(MB_REG_ADDR_APP_VERSION_L, appinfo->version);
+		PRINT("verify app ...\r\n");
+		if (0 == APP_VERIFY(ctx.otainfo.app_size, ctx.otainfo.app_md5)){
 			memcpy(&ctx.appinfo, buf, sizeof(appinfo_t));
 			ctx.app_available = 1;
-			return ;
+		}else{
+			PRINT("app not available\r\n");
+			ctx.otainfo.app_version = 0;
+			flag_ota_update = 1;
 		}
 	}
-	modbus_reg_update(MB_REG_ADDR_APP_VID, 0);
-	modbus_reg_update(MB_REG_ADDR_APP_PID, 0);
-	modbus_reg_update(MB_REG_ADDR_APP_VERSION_H, 0);
-	modbus_reg_update(MB_REG_ADDR_APP_VERSION_L, 0);
-	ctx.app_available = 0;
+	//backup check
+	FLASH_ROM_READ(BACKUP_APPINFO_ADDR, buf, sizeof(appinfo_t));
+	if (APP_MAGIC == appinfo->magic && 
+		appinfo->version == ctx.otainfo.ota_version)
+	{
+		if (!ctx.app_available || 
+			(appinfo->vid == ctx.appinfo.vid && 
+			appinfo->pid == ctx.appinfo.pid))
+		{
+			PRINT("verify backup app ...\r\n");
+			if (0 == BACKUP_VERIFY(ctx.otainfo.ota_size, ctx.otainfo.ota_md5)){
+				memcpy(&ctx.backup_appinfo, buf, sizeof(appinfo_t));
+				ctx.backup_available = 1;
+			}else{
+				PRINT("backup app not available\r\n");
+				ctx.otainfo.ota_version = 0;
+				flag_ota_update = 1;
+			}
+		}else{
+			PRINT("backup app not available\r\n");
+			ctx.otainfo.ota_version = 0;
+			flag_ota_update = 1;
+		}
+	}
+	if (flag_ota_update){
+		st_update_ota(&ctx.otainfo);
+	}
 }
 void upgrade_init(){
 	uint8_t uid[16] = {0};
@@ -205,7 +302,22 @@ void upgrade_init(){
 	modbus_reg_update(MB_REG_ADDR_APP_STATE, MB_REG_APP_STATE_BOOT);
 	
 	upgrade_read_appinfo();
-	
+	if (ctx.backup_available && (!ctx.app_available || 
+		ctx.backup_appinfo.version != ctx.appinfo.version ||
+		memcmp(ctx.otainfo.app_md5, ctx.otainfo.ota_md5, 16)))
+	{
+		PRINT("copy app ...\r\n");
+		if (0 == upgrade_copy_app()){
+			ctx.app_available = 1;
+			memcpy(&ctx.appinfo, &ctx.backup_appinfo, sizeof(appinfo_t));
+		}
+	}
+	if (ctx.app_available){
+		modbus_reg_update(MB_REG_ADDR_APP_VID, ctx.appinfo.vid);
+		modbus_reg_update(MB_REG_ADDR_APP_PID, ctx.appinfo.pid);
+		modbus_reg_update(MB_REG_ADDR_APP_VERSION_H, ctx.appinfo.version >> 16);
+		modbus_reg_update(MB_REG_ADDR_APP_VERSION_L, ctx.appinfo.version);
+	}
 	modbus_reg_update(MB_REG_ADDR_BLOCK_SIZE, EEPROM_BLOCK_SIZE);
 	modbus_reg_update(MB_REG_ADDR_BUF_LEN_H, MB_REG_DATA_BUF_SIZE >> 16);
 	modbus_reg_update(MB_REG_ADDR_BUF_LEN_L, MB_REG_DATA_BUF_SIZE);
@@ -213,18 +325,14 @@ void upgrade_init(){
 }
 
 void upgrade_opt_finish(upgrade_opt_err_t err){
-	if (UPGRADE_OPT_OK != err){
-		modbus_reg_update(MB_REG_ADDR_OPT_STATE, UPGRADE_OPT_S_FAIL);
-		modbus_reg_update(MB_REG_ADDR_OPT_ERR, err);
-	}else{
-		modbus_reg_update(MB_REG_ADDR_OPT_STATE, UPGRADE_OPT_S_FINISH);
-		modbus_reg_update(MB_REG_ADDR_OPT_ERR, UPGRADE_OPT_OK);
-	}
+	modbus_reg_update(MB_REG_ADDR_OPT_STATE, UPGRADE_OPT_S_FINISH);
+	modbus_reg_update(MB_REG_ADDR_OPT_ERR, err);
 	ctx.status = UPGRADE_S_IDLE;
 }
 
 void upgrade_flash_start(){
 	uint16_t crc = 0;
+	appinfo_t *appinfo = NULL;
 	modbus_reg_update(MB_REG_ADDR_OPT_CODE, UPGRADE_OPT_FLASH);
 	modbus_reg_update(MB_REG_ADDR_OPT_STATE, UPGRADE_OPT_S_EXEC);
 	ctx.opt_ctx.flash.len = modbus_reg_get(MB_REG_ADDR_DATA_LEN_H);
@@ -248,26 +356,16 @@ void upgrade_flash_start(){
 		return;
 	}
 	if (!ctx.bytes_write){
-		MD5Init(&ctx.md5_ctx);
+		display_printline(DISPLAY_LAST_LINE, "Recving ...");
+		appinfo = (appinfo_t *)(ctx.opt_ctx.flash.data_buf + APPINFO_OFFSET);
+		if (!upgrade_is_image_valid(appinfo))
+		{
+			upgrade_opt_finish(UPGRADE_OPT_ERR_INVALID_IMAGE);
+			return;
+		}
 	}
 	ctx.opt_ctx.flash.bytes_write = 0;
 	crc16_init(&ctx.opt_ctx.flash.flash_crc_ctx);
-}
-
-static int upgrade_is_image_valid(appinfo_t *img_info){
-	if (APP_MAGIC != img_info->magic){
-		goto fail;
-	}
-	if (ctx.app_available){
-		if (ctx.appinfo.vid != img_info->vid || 
-			ctx.appinfo.pid != img_info->pid)
-		{
-			goto fail;
-		}
-	}
-	return 1;
-fail:
-	return 0;
 }
 
 void upgrade_flash_next(){
@@ -277,19 +375,11 @@ void upgrade_flash_next(){
 	uint8_t buf[EEPROM_PAGE_SIZE] = {0};
 	
 	addr = ctx.opt_ctx.flash.addr + ctx.opt_ctx.flash.bytes_write;
-	bytes_write = MIN(EEPROM_PAGE_SIZE, ctx.opt_ctx.flash.len);
+	bytes_write = ctx.opt_ctx.flash.len - ctx.opt_ctx.flash.bytes_write;
+	bytes_write = MIN(EEPROM_PAGE_SIZE, bytes_write);
 	idx = ctx.opt_ctx.flash.data_buf + ctx.opt_ctx.flash.bytes_write;
 	memcpy(buf, idx, bytes_write);
 	
-	//first packet
-	if (!ctx.bytes_write){
-		appinfo_t *appinfo = (appinfo_t *)(buf + APPINFO_OFFSET);
-		if (!upgrade_is_image_valid(appinfo))
-		{
-			upgrade_opt_finish(UPGRADE_OPT_ERR_INVALID_IMAGE);
-			return;
-		}
-	}
 	if (FLASH_ROM_WRITE(addr, buf, bytes_write)){
 		upgrade_opt_finish(UPGRADE_OPT_ERR_FLASH);
 		return;
@@ -318,7 +408,7 @@ void upgrade_flash_next(){
 		}
 		ctx.bytes_write += ctx.opt_ctx.flash.len;
 		progress = ctx.bytes_write * 100 / ctx.image_size;
-		display_printline(DISPLAY_LAST_LINE, "Recv:%d%%", progress);
+		display_printline(DISPLAY_LAST_LINE, "Recv:%u%%", progress);
 		upgrade_opt_finish(UPGRADE_OPT_OK);
 	}
 }
@@ -332,11 +422,12 @@ int upgrade_erase_start(){
 	modbus_reg_update(MB_REG_ADDR_OPT_PROGRESS, ctx.opt_ctx.erase.progress);
 	image_size = modbus_reg_get(MB_REG_ADDR_DATA_LEN_H);
 	image_size <<= 16;
-	image_size += modbus_reg_get(MB_REG_ADDR_DATA_LEN_H);
+	image_size += modbus_reg_get(MB_REG_ADDR_DATA_LEN_L);
 	if (image_size > BACKUP_PART_SIZE){
 		upgrade_opt_finish(UPGRADE_OPT_ERR_INVALID_LEN);
 	}
 	ctx.image_size = image_size;
+	ctx.bytes_write = 0;
 	display_printline(DISPLAY_LAST_LINE, "Eraseing ...");
 	return 0;
 }
@@ -416,6 +507,9 @@ void upgrade_exec_next(){
 		case UPGRADE_OPT_FLASH:
 			upgrade_flash_next();
 			break;
+		case UPGRADE_OPT_VERIFY:
+			upgrade_verify_next();
+			break;
 		default:
 			break;
 	}
@@ -449,52 +543,14 @@ void upgrade_exec_start(){
 		case UPGRADE_OPT_FLASH:
 			upgrade_flash_start();
 			break;
+		case UPGRADE_OPT_VERIFY:
+			upgrade_verify_start();
+			break;
 		default:
 			upgrade_opt_finish(UPGRADE_OPT_ERR_INVALID_OPT);
 			break;
 	}
 	ctx.flag_opt = 0;
-}
-
-static int upgrade_copy_app(){
-	uint8_t buf[EEPROM_PAGE_SIZE];
-	uint32_t bytes_handled = 0;
-	uint32_t bytes_read = 0;
-	display_printline(DISPLAY_LAST_LINE, "Copy app ...");
-	while(bytes_handled < ctx.otainfo.ota_size){
-		FLASH_ROM_ERASE(APP_ADDR_START + bytes_handled, EEPROM_BLOCK_SIZE);
-		bytes_handled += EEPROM_BLOCK_SIZE;
-	}
-	bytes_handled = 0;
-	while(bytes_handled < ctx.otainfo.ota_size){
-		bytes_read = MIN(EEPROM_PAGE_SIZE, ctx.otainfo.ota_size - bytes_handled);
-		FLASH_ROM_READ(APP_ADDR_START + bytes_handled, buf, bytes_read);
-		if (FLASH_ROM_WRITE(APP_ADDR_START + bytes_handled, buf, bytes_read)){
-			goto fail;
-		}
-		if (FLASH_ROM_VERIFY(APP_ADDR_START + bytes_handled, buf, bytes_read)){
-			goto fail;
-		}
-		bytes_handled += bytes_read;
-	}
-	ctx.otainfo.app_size = ctx.otainfo.ota_size;
-	ctx.otainfo.app_version = ctx.otainfo.ota_version;
-	memcpy(ctx.otainfo.app_md5, ctx.otainfo.ota_md5, 16);
-
-	st_update_ota(&ctx.otainfo);
-	return 0;
-	
-fail:
-	return -1;
-}
-static void upgrade_jumpapp(){
-	uint8_t need_copy = 0;
-	PFIC_DisableAllIRQ();
-	modbus_deinit();
-	if (ctx.otainfo.ota_version != ctx.otainfo.app_version){
-		upgrade_copy_app();
-	}
-	GOTO_AP();
 }
 
 void upgrade_run(){
@@ -517,6 +573,7 @@ void upgrade_run(){
 				if (ctx.app_available && (!ctx.flag_standby) && 
 					worktime_since(ctx.lasttime) > 3000)
 				{
+					OLED_Clear();
 					upgrade_jumpapp();
 				}
 			}
@@ -534,5 +591,11 @@ int upgrade_app_available(){
 }
 int upgrade_app_version(){
 	return ctx.app_available ? ctx.appinfo.version : 0;
+}
+int upgrade_backup_available(){
+	return ctx.backup_available;
+}
+int upgrade_backup_version(){
+	return ctx.backup_available ? ctx.backup_appinfo.version : 0;
 }
 

@@ -41,22 +41,33 @@ static struct st_item items[] = {
 	{0, ST_ADDR_OTA - ST_P0_ADDR_BASE, sizeof(st_ota_t)}
 };
 
-
 static void st_save(st_page_t *page){
-	uint16_t i, offset;
+	uint32_t ret = 0;
+	uint32_t len = 0;
 	if (!page || page->len <= 0){
 		return;
 	}
-	if (0 != EEPROM_ERASE(ST_ADDR_BASE + page->start, page->len)){
+	len = ALIGN(page->len, EEPROM_PAGE_SIZE);
+	ret = EEPROM_ERASE(page->start, len);
+	if (0 != ret){
+		PRINT("eeprome erase err(%u)", ret);
 		return;
 	}
-	EEPROM_WRITE(ST_ADDR_BASE + page->start, page->content, page->len);
+	ret = EEPROM_WRITE(page->start, page->content, page->len);
+	if (0 != ret){
+		PRINT("eeprome write err(%u)", ret);
+		return;
+	}
 }
 static void st_load(){
 	int i;
+	uint32_t ret = 0;
 	for (i = 0; i < sizeof(st_pages)/sizeof(st_page_t); i ++){
-		EEPROM_READ(ST_ADDR_BASE + st_pages[i].start, 
+		ret = EEPROM_READ(st_pages[i].start, 
 			st_pages[i].content, st_pages[i].len);
+		if (0 != ret){
+			PRINT("eeprom read err(%u)", ret);
+		}
 		st_pages[i].checksum = crc16((uint8_t *)st_pages[i].content, 
 			st_pages[i].len);
 	}

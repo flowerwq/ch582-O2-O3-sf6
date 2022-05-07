@@ -32,6 +32,7 @@ static int display_scroll(){
 
 	for (i = 0; i < DISPLAY_LINE_MAX; i++){
 		area.y = i * DISPLAY_FONT_SIZE;
+		area.width = line_idx[i]->len * DISPLAY_FONT_WIDTH;
 		OLED_clear_buffer(&area);
 	}
 	for (i = 0; i < DISPLAY_LINE_MAX - 1; i++){
@@ -77,7 +78,7 @@ int display_string(int line, char *str){
 	}else{
 		if (len < line_idx[line]->len){
 			oled_area_t area = {
-				.x = line_idx[line]->len * DISPLAY_FONT_WIDTH,
+				.x = len * DISPLAY_FONT_WIDTH,
 				.y = line * DISPLAY_FONT_SIZE,
 				.height = DISPLAY_FONT_SIZE,
 				.width = (line_idx[line]->len - len) * DISPLAY_FONT_WIDTH,
@@ -95,7 +96,7 @@ int display_string(int line, char *str){
 }
 
 int display_printline(int line, char *fmt, ...){
-	char buf[DISPLAY_LINE_LEN + 1];
+	char buf[DISPLAY_LINE_LEN + 1] = {0};
 	va_list vp;
 	va_start(vp, fmt);
 	vsnprintf(buf, DISPLAY_LINE_LEN, fmt, vp);
