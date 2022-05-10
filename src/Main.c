@@ -120,7 +120,11 @@ int main()
 		st_run();
 //		if (worktime_since(worktime) >= 1000){
 //			worktime = worktime_get();
-//			display_printf("ts:%u", (uint32_t)worktime);
+//			if ((worktime / 1000) % 2){
+//				display_printline(DISPLAY_LAST_LINE, "ts:%u", (uint32_t)worktime);
+//			}else{
+//				display_printline(DISPLAY_LAST_LINE, "abcdef abcdedg");
+//			}
 //		}
 	}
 }

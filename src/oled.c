@@ -128,8 +128,8 @@ void OLED_clear_buffer(oled_area_t *area)
 		return ;
 	}
 	if (!OLED_X_VALID(area->x) || !OLED_Y_VALID(area->y) ||
-		!OLED_X_VALID(area->x + area->width) || 
-		!OLED_Y_VALID(area->y + area->height))
+		!OLED_X_VALID(area->x + area->width - 1) || 
+		!OLED_Y_VALID(area->y + area->height - 1))
 	{
 		return ;
 	}
@@ -141,7 +141,7 @@ void OLED_clear_buffer(oled_area_t *area)
 	bit_e = (area->y + area->height) % 8;
 	
 	//Y
-	for(i = idx_y_s; i <= idx_y_e; i++)
+	for(i = idx_y_s; i < idx_y_e; i++)
 	{
 		mask = 0;
 		if (i == idx_y_s){
@@ -151,7 +151,7 @@ void OLED_clear_buffer(oled_area_t *area)
 			mask |= 0xff << (bit_e + 1);
 		}
 		//X
-	   	for(n = 0;n < 128; n++)
+	   	for(n = area->x; n < area->x + area->width; n++)
 		{
 			OLED_GRAM[n][i] &= mask;//清除数据
 		}
