@@ -13,5 +13,6 @@
 
 #include "utils/crc16.h"
 #include "utils/md5.h"
+#include "utils/log.h"
 #endif
 

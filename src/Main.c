@@ -114,6 +114,7 @@ int main()
 		DISPLAY_PRINT("BAK:none");
 	}
 	PRINT("main loop start ...\r\n");
+	
     while(1){
 		OLED_Refresh();
 		upgrade_run();
