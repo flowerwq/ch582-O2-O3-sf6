@@ -1,18 +1,11 @@
 #ifndef __STORAGE_H__
 #define __STORAGE_H__
 #include "stdint.h"
-typedef struct st_ota_s{
-	uint32_t app_version;
-	uint32_t app_size;
-	uint8_t app_md5[16];
-	uint32_t ota_version;
-	uint32_t ota_size;
-	uint8_t ota_md5[16];
-}st_ota_t;
+#include "CH58x_common.h"
 
 #define ST_PAGE_SIZE EEPROM_PAGE_SIZE
 #define ST_PAGE_MAX	(EEPROM_MAX_SIZE/EEPROM_PAGE_SIZE)
-#define ST_PAGE_VALID(p)	((p) >= 0 && (p) < ST_PAGE_MAX);
+#define ST_PAGE_VALID(p)	((p) >= 0 && (p) < ST_PAGE_MAX)
 
 #define ST_ADDR_BASE	0x70000
 
@@ -30,19 +23,12 @@ typedef struct st_item{
 	uint8_t content[ST_MAX_CONTENT_LEN];
 } st_item_t;
 
-typedef enum st_addr{
-	ST_P0_ADDR_BASE = 0,
-	ST_ADDR_OTA = ST_P0_ADDR_BASE + 4,
-	ST_ADDR_OTA_E = ST_ADDR_OTA + sizeof(st_ota_t),
-	ST_P0_ADDR_MAX,
-} st_addr_t;
-
-#define ST_PAGE_S_ERASED	0x7F
-#define ST_PAGE_S_INUSE		0x7E
+#define ST_PAGE_S_ERASED	0x7F	//erased
+#define ST_PAGE_S_INUSE		0x7E	//
 #define ST_PAGE_S_FULL		0x7C
 #define ST_PAGE_S_UNAVAILABLE	0x00
 
-#define ST_PAGE_HEADER_SIZE	sizeof(uint8_t);
+#define ST_PAGE_HEADER_SIZE	sizeof(uint8_t)
 #define ST_PAGE_CONTENT_MAX	(ST_PAGE_SIZE - ST_PAGE_HEADER_SIZE)
 
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -71,15 +57,19 @@ typedef struct st_page{
 #else
 typedef struct st_page{
 	st_page_status_t status;
+	uint16_t item_cnt;
 	uint16_t bytes_used;
 	uint16_t bytes_available;
 } st_page_t;
 #endif
 
 void st_run();
-void st_init();
+int st_init();
+int st_read_item(uint16_t item_idx, uint8_t *buf, int len);
+int st_write_item(uint16_t item_idx, uint8_t *buf, int len);
 
-int st_get_ota(st_ota_t *result);
-int st_update_ota(st_ota_t *val);
+
+//int st_get_ota(st_ota_t *result);
+//int st_update_ota(st_ota_t *val);
 
 #endif

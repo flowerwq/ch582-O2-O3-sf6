@@ -12,6 +12,7 @@
 #define ABS(v)	((v) < 0 ? -(v) : (v))
 
 #include "utils/crc16.h"
+#include "utils/crc.h"
 #include "utils/md5.h"
 #include "utils/log.h"
 #endif

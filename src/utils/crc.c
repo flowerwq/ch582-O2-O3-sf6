@@ -1,5 +1,5 @@
 /* *一口Linux *2021.6.21 *version: 1.0.0*/ 
-#include "crc.h" 
+#include "utils/crc.h" 
 typedef enum{
     REF_4BIT = 4, 
     REF_5BIT = 5, 

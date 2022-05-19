@@ -34,6 +34,6 @@ typedef struct {
 #define CRC32_INIT {32, 0x04c11db7, 0xffffffff, true, true, 0xffffffff}
 #define CRC32_MPEG2_INIT {32, 0x4c11db7, 0xffffffff, false, false, 0x00000000}
 
-uint32_t crc_check(crc_type_t crcType, const uint8_t * buffer, uint32_t length); 
+uint32_t crc_check(crc_type_t *crc_type, const uint8_t * buffer, uint32_t length); 
 
 #endif

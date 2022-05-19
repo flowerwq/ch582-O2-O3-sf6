@@ -7,7 +7,7 @@
 #include "worktime.h"
 #include "uid.h"
 #include "appinfo.h"
-#include "storage.h"
+#include "configtool.h"
 #include "display.h"
 
 typedef enum upgrade_status{
@@ -69,7 +69,7 @@ typedef union upgrade_opt_context{
 } upgrade_opt_ctx_t;
 
 typedef struct upgrade_context{
-	st_ota_t otainfo;
+	cfg_ota_t otainfo;
 	upgrade_status_t status;
 	worktime_t lasttime;
 	upgrade_opt_t opt_code;
@@ -85,7 +85,7 @@ typedef struct upgrade_context{
 	MD5_CTX md5_ctx;
 } upgrade_ctx_t;
 
-#define BOOT_PART_SIZE	(32 * 1024)
+#define BOOT_PART_SIZE	(48 * 1024)
 #define BOOT_BLOCK_NUM	(BOOT_PART_SIZE / EEPROM_BLOCK_SIZE)
 
 #define APP_ADDR_START	BOOT_PART_SIZE
@@ -225,7 +225,7 @@ static int upgrade_copy_app(){
 	ctx.otainfo.app_version = ctx.otainfo.ota_version;
 	memcpy(ctx.otainfo.app_md5, ctx.otainfo.ota_md5, 16);
 
-	st_update_ota(&ctx.otainfo);
+	cfg_update_ota(&ctx.otainfo);
 	return 0;
 	
 fail:
@@ -246,7 +246,7 @@ void upgrade_read_appinfo(){
 	uint8_t buf[ALIGN_4(sizeof(appinfo_t))] = {0};
 	appinfo_t *appinfo = (appinfo_t *)buf;
 	uint8_t flag_ota_update = 0;
-	st_get_ota(&ctx.otainfo);
+	cfg_get_ota(&ctx.otainfo);
 	FLASH_ROM_READ(APPINFO_ADDR, buf, sizeof(appinfo_t));
 	ctx.app_available = 0;
 	ctx.backup_available = 0;
@@ -289,7 +289,7 @@ void upgrade_read_appinfo(){
 		}
 	}
 	if (flag_ota_update){
-		st_update_ota(&ctx.otainfo);
+		cfg_update_ota(&ctx.otainfo);
 	}
 }
 void upgrade_init(){
@@ -489,7 +489,7 @@ static int upgrade_verify_next(){
 		ctx.otainfo.ota_size = ctx.image_size;
 		ctx.otainfo.ota_version = appinfo->version;
 		memcpy(ctx.otainfo.ota_md5, md5, 16);
-		st_update_ota(&ctx.otainfo);
+		cfg_update_ota(&ctx.otainfo);
 		upgrade_opt_finish(UPGRADE_OPT_OK);
 		display_printline(DISPLAY_LAST_LINE, "Verify finish");
 		return 0;

@@ -10,12 +10,15 @@
 #include "stdio.h"
 #include "CH58x_common.h"
 #include "worktime.h"
-#include "storage.h"
+#include "configtool.h"
 #include "upgrade.h"
 #include "oled.h"
 #include "bmp.h"
 #include "display.h"
 #include "version.h"
+#include "utils.h"
+
+#define TAG "main"
 
 /*********************************************************************
  * @fn      main
@@ -83,7 +86,7 @@ int main()
     UART1_DefInit();
 
 	reset_dump();
-	PRINT("start ...\r\n");
+	LOG_INFO(TAG, "start ...");
 	uuid_dump();
 	
 	OLED_Init();
@@ -91,7 +94,7 @@ int main()
 	OLED_Refresh();
 	
 	display_init();
-	st_init();
+	cfg_init();
 	upgrade_init();
 
 	while(worktime_since(worktime) < 1000){
@@ -113,12 +116,11 @@ int main()
 	}else{
 		DISPLAY_PRINT("BAK:none");
 	}
-	PRINT("main loop start ...\r\n");
+	LOG_INFO(TAG, "main loop start ...");
 	
     while(1){
 		OLED_Refresh();
 		upgrade_run();
-		st_run();
 //		if (worktime_since(worktime) >= 1000){
 //			worktime = worktime_get();
 //			if ((worktime / 1000) % 2){
