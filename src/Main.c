@@ -10,6 +10,7 @@
 #include "stdio.h"
 #include "CH58x_common.h"
 #include "worktime.h"
+#include "storage.h"
 #include "configtool.h"
 #include "upgrade.h"
 #include "oled.h"
@@ -96,7 +97,13 @@ int main()
 	display_init();
 	cfg_init();
 	upgrade_init();
-
+	int i = 0;
+	for(i = 0 ; i < 10; i++){
+		if (st_write_item(10, buf, sizeof(buf))< 0){
+			LOG_ERROR(TAG, "fail to write item");
+		}
+		__nop();
+	}
 	while(worktime_since(worktime) < 1000){
 		__nop();
 	}
