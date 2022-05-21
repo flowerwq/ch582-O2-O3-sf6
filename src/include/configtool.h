@@ -18,5 +18,7 @@ typedef enum cfg_key{
 } cfg_key_t;
 
 int cfg_init();
+int cfg_get_ota(cfg_ota_t *result);
+int cfg_update_ota(cfg_ota_t *val);
 
 #endif

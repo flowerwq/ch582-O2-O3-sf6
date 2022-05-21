@@ -92,7 +92,6 @@ typedef struct st_page{
 int st_init();
 int st_read_item(uint16_t item_idx, uint8_t *buf, int len);
 int st_write_item(uint16_t item_idx, uint8_t *buf, int len);
-int st_run();
 
 
 //int st_get_ota(st_ota_t *result);
