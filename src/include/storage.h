@@ -4,7 +4,9 @@
 #include "CH58x_common.h"
 
 #define ST_PAGE_SIZE EEPROM_PAGE_SIZE
-#define ST_PAGE_MAX	(EEPROM_MAX_SIZE/EEPROM_PAGE_SIZE)
+//#define ST_PAGE_MAX	(EEPROM_MAX_SIZE/EEPROM_PAGE_SIZE)
+#define ST_PAGE_MAX	3
+
 #define ST_PAGE_VALID(p)	((p) >= 0 && (p) < ST_PAGE_MAX)
 
 #define ST_ADDR_BASE	0x70000
@@ -74,20 +76,12 @@ typedef struct st_item{
 
 typedef uint8_t st_page_status_t;
 
-#if ST_PAGE_SIZE <= 0xff
-typedef struct st_page{
-	uint8_t status;
-	uint8_t bytes_used;
-	uint8_t bytes_available;
-} st_page_t;
-#else
 typedef struct st_page{
 	uint8_t status;
 	uint16_t item_cnt;
 	uint16_t bytes_used;
 	uint16_t bytes_available;
 } st_page_t;
-#endif
 
 int st_init();
 int st_read_item(uint16_t item_idx, uint8_t *buf, int len);

@@ -20,12 +20,12 @@ typedef struct st_search_context {
 
 typedef struct st_context {
 	uint8_t flag_init;
-	uint16_t page_start;
 	uint16_t page_active;
-	st_page_t *pages;
+	uint16_t page_start;
+	uint16_t page_cnt;
+	st_page_t pages[ST_PAGE_MAX];
+	st_search_ctx_t search_ctx;
 } st_ctx_t;
-
-static st_page_t st_pages[ST_PAGE_MAX];
 static st_ctx_t st_ctx;
 
 static const char *st_page_status_str(uint8_t status){
@@ -72,9 +72,11 @@ static int st_page_read(uint16_t idx, uint16_t offset,
 {
 	uint32_t addr = idx * ST_PAGE_SIZE + ST_PAGE_HEADER_SIZE + offset;
 	if (!ST_PAGE_VALID(idx)){
+		LOG_ERROR(TAG, "invalid idx.");
 		return -1;
 	}
 	if (offset + len + ST_PAGE_HEADER_SIZE>= ST_PAGE_SIZE){
+		LOG_ERROR(TAG, "invalid offset or len.");
 		return -1;
 	}
 	if (EEPROM_READ(addr, buf, len)){
@@ -94,6 +96,7 @@ static int st_page_erase(st_ctx_t *ctx, uint16_t idx){
 	}
 	ctx->pages[idx].bytes_used = 0;
 	ctx->pages[idx].item_cnt = 0;
+	ctx->pages[idx].status = ST_PAGE_S_ERASED;
 	return 0;
 }
 //static int st_page_clear(uint16_t idx, uint16_t offset, 
@@ -167,12 +170,12 @@ static int st_page_erase_check(uint16_t idx){
 fail:
 	return -1;
 }
-static int st_page_status(uint16_t idx){
+static int st_page_status(st_ctx_t *ctx, uint16_t idx){
 	st_page_t *page = NULL;
 	if (!ST_PAGE_VALID(idx)){
 		return -1;
 	}
-	page = &st_pages[idx];
+	page = &ctx->pages[idx];
 	return page->status;
 }
 
@@ -231,7 +234,7 @@ static int st_page_write_item(st_ctx_t *ctx, uint16_t idx, st_item_t *item){
 			LOG_ERROR(TAG, "invalid page status.");
 			goto fail;
 	}
-	LOG_DEBUG(TAG, "write item(idx:%d,len:%d,crc:%d) to page %d, offset:%d", 
+	LOG_DEBUG(TAG, "write item(idx:%04X,len:%d,crc:%02X) to page %d, offset:%d", 
 		item->header.idx, item->header.len, item->header.crc, idx, 
 		page->bytes_used);
 	bytes_write = item->header.len + sizeof(st_item_header_t);
@@ -243,13 +246,13 @@ static int st_page_write_item(st_ctx_t *ctx, uint16_t idx, st_item_t *item){
 	page->bytes_used += bytes_write;
 	page_status = page->status;
 	if (ST_PAGE_S_ERASED == page->status){
-		LOG_DEBUG(TAG, "page status change(%s -> %s)", 
+		LOG_DEBUG(TAG, "page %d status change(%s -> %s)", idx, 
 			st_page_status_str(ST_PAGE_S_ERASED), 
 			st_page_status_str(ST_PAGE_S_ACTIVE));
 		page_status = ST_PAGE_S_ACTIVE;
 	}
 	if (ST_PAGE_CONTENT_MAX - page->bytes_used < sizeof(st_item_header_t)){
-		LOG_DEBUG(TAG, "page status change(%s -> %s)", 
+		LOG_DEBUG(TAG, "page %d status change(%s -> %s)", idx, 
 			st_page_status_str(ST_PAGE_S_ACTIVE), 
 			st_page_status_str(ST_PAGE_S_FULL));
 		page_status = ST_PAGE_S_FULL;
@@ -302,7 +305,7 @@ static int st_page_delete_item(st_ctx_t *ctx, uint16_t idx, uint16_t item_idx)
 			offset += item.header.len + sizeof(st_item_header_t);
 			continue;
 		}
-		LOG_DEBUG(TAG, "delete item(idx:%d) from page %d, offset:%d", 
+		LOG_DEBUG(TAG, "delete item(idx:%04X) from page %d, offset:%d", 
 			item.header.idx, idx, offset);
 		item.header.idx = 0;
 		ret = st_page_write(idx, offset, (uint8_t *)&item.header, 
@@ -318,17 +321,16 @@ static int st_page_delete_item(st_ctx_t *ctx, uint16_t idx, uint16_t item_idx)
 		offset += item.header.len + sizeof(st_item_header_t);
 	}
 	if (!page->item_cnt && ST_PAGE_S_FULL == page->status){
-		LOG_DEBUG(TAG, "erase page %d", idx);
 		ret = st_page_erase(ctx, idx);
 		if (ret < 0){
-			LOG_ERROR(TAG, "fail to write item header.");
+			LOG_ERROR(TAG, "erase failed.");
 		}
 	}
 	return cnt;
 fail:
 	return -1;
 }
-int st_delete_item_with_loc(uint16_t item_idx, st_item_location_t *location){
+int st_delete_item_with_loc(st_ctx_t *ctx, uint16_t item_idx, st_item_location_t *location){
 	st_page_t *page = NULL;
 	st_item_header_t header = {0};
 	int ret = 0;
@@ -339,7 +341,7 @@ int st_delete_item_with_loc(uint16_t item_idx, st_item_location_t *location){
 	if (!ST_PAGE_VALID(location->page)){
 		goto fail;
 	}
-	page = &st_pages[location->page];
+	page = &ctx->pages[location->page];
 	if (!page->item_cnt){
 		LOG_ERROR(TAG, "%s:target page is empty", __FUNCTION__);
 		goto fail;
@@ -363,12 +365,20 @@ int st_delete_item_with_loc(uint16_t item_idx, st_item_location_t *location){
 		LOG_ERROR(TAG, "%s:fail to write header", __FUNCTION__);
 		goto fail;
 	}
-	page->item_cnt --;
+	if (page->item_cnt){
+		page->item_cnt --;
+	}
+	if (!page->item_cnt && ST_PAGE_S_FULL == page->status){
+		ret = st_page_erase(ctx, location->page);
+		if (ret < 0){
+			LOG_ERROR(TAG, "fail to write item header.");
+		}
+	}
 	return 0;
 fail:
 	return -1;
 }
-static int st_page_find_item(st_search_ctx_t *search_ctx, uint16_t idx, 
+static int st_page_find_item(st_ctx_t *ctx, uint16_t idx, 
 	st_item_t *result)
 {
 	st_page_t *page = NULL;
@@ -376,24 +386,25 @@ static int st_page_find_item(st_search_ctx_t *search_ctx, uint16_t idx,
 	uint16_t offset = 0;
 	int cnt = 0;
 	int ret = 0;
-	if (!search_ctx){
+	if (!ctx){
 		return -1;
 	}
 	if (!ST_PAGE_VALID(idx)){
 		return -1;
 	}
-	if (!ST_ITEM_IDX_VALID(search_ctx->item_idx)){
+	if (!ST_ITEM_IDX_VALID(ctx->search_ctx.item_idx)){
 		LOG_ERROR(TAG, "invalid item idx.");
 		return -1;
 	}
-	page = &st_pages[idx];
+	page = &ctx->pages[idx];
 	if (ST_PAGE_S_ERASED == page->status || 
 		ST_PAGE_S_UNAVAILABLE == page->status)
 	{
 		return 0;
 	}
 	while(offset < page->bytes_used){
-		ret = st_page_read(idx, offset, (uint8_t *)&item.header, sizeof(st_item_header_t));
+		ret = st_page_read(idx, offset, (uint8_t *)&item.header, 
+			sizeof(st_item_header_t));
 		if (ret < 0){
 			LOG_ERROR(TAG, "fail to read item header.");
 			goto fail;
@@ -402,7 +413,7 @@ static int st_page_find_item(st_search_ctx_t *search_ctx, uint16_t idx,
 			offset += item.header.len + sizeof(st_item_header_t);
 			continue;
 		}
-		if (item.header.idx != search_ctx->item_idx){
+		if (item.header.idx != ctx->search_ctx.item_idx){
 			offset += item.header.len + sizeof(st_item_header_t);
 			continue;
 		}
@@ -425,17 +436,18 @@ static int st_page_find_item(st_search_ctx_t *search_ctx, uint16_t idx,
 			memcpy(result, &item, sizeof(st_item_t));
 		}
 		//delete last record if exist;
-		if (ST_PAGE_VALID(search_ctx->last_location.page)){
-			ret = st_delete_item_with_loc(search_ctx->item_idx, 
-					&search_ctx->last_location);
+		if (ST_PAGE_VALID(ctx->search_ctx.last_location.page)){
+			ret = st_delete_item_with_loc(ctx, idx, 
+				&ctx->search_ctx.last_location);
 			if (ret < 0){
 				LOG_ERROR(TAG, "fail to delete last record");
 				goto fail;
 			}
 		}
-		search_ctx->last_location.page = idx;
-		search_ctx->last_location.offset = offset;
-		memcpy(&search_ctx->last_header, (uint8_t *)&item.header, sizeof(st_item_header_t));
+		ctx->search_ctx.last_location.page = idx;
+		ctx->search_ctx.last_location.offset = offset;
+		memcpy(&ctx->search_ctx.last_header, (uint8_t *)&item.header, 
+			sizeof(st_item_header_t));
 		cnt ++;
 		offset += item.header.len + sizeof(st_item_header_t);
 	}
@@ -449,6 +461,7 @@ static worktime_t lasttime;
 static int st_page_scan(st_ctx_t *ctx, uint16_t idx){
 	st_page_t *page = NULL;
 	st_item_t item = {0};
+	int ret = 0;
 	page = &ctx->pages[idx];
 	uint32_t addr = idx * ST_PAGE_SIZE;
 	uint32_t bytes_read = sizeof(item.header);
@@ -456,7 +469,9 @@ static int st_page_scan(st_ctx_t *ctx, uint16_t idx){
 	page->item_cnt = 0;
 	LOG_DEBUG(TAG, "scan page %d", idx);
 	while(page->bytes_used < ST_PAGE_CONTENT_MAX){
-		if (!st_page_read(idx, page->bytes_used, (uint8_t *)&item.header, sizeof(item.header))){
+		ret = st_page_read(idx, page->bytes_used, 
+			(uint8_t *)&item.header, sizeof(item.header));
+		if (ret < 0){
 			LOG_ERROR(TAG, "fail to read item header");
 			goto fail;
 		}
@@ -496,8 +511,8 @@ static int st_page_init(st_ctx_t *ctx, uint16_t idx){
 		LOG_ERROR(TAG, "fail to read page status");
 		goto fail;
 	}
+	LOG_DEBUG(TAG, "page %d: %s", idx, st_page_status_str(page->status));
 	switch(page->status){
-		case ST_PAGE_S_FULL:
 		case ST_PAGE_S_UNAVAILABLE:
 			break;
 		case ST_PAGE_S_ERASED:
@@ -514,6 +529,7 @@ static int st_page_init(st_ctx_t *ctx, uint16_t idx){
 				}
 			}
 			break;
+		case ST_PAGE_S_FULL:
 		case ST_PAGE_S_ACTIVE:
 			if (st_page_scan(ctx, idx)){
 				LOG_ERROR(TAG, "fail to load page");
@@ -540,11 +556,13 @@ static int st_first_page(st_ctx_t *ctx, uint16_t page_from, uint8_t status){
 	if (!ST_PAGE_VALID(page_start)){
 		return -1;
 	}
-	for(i = page_start; st_page_next(i) != page_start; i = st_page_next(i)){
+	i = page_start;
+	do{
 		if (ctx->pages[i].status == status){
 			return i;
 		}
-	}
+		i = st_page_next(i);
+	}while(i != page_start);
 	return ST_PAGE_MAX;
 }
 
@@ -568,11 +586,15 @@ fail:
 	return -1;
 }
 
+/**
+ * @brief Storage module init. Must called before read or write data.
+ * @return 0-Success, (-1)-Error
+ */
+
 int st_init(){
 	uint16_t i = 0;
 	int ret = 0;
 	st_page_status_t page_status = {0};
-	st_ctx.pages = st_pages;
 	st_ctx.page_start = ST_PAGE_MAX;
 	st_ctx.page_active = ST_PAGE_MAX;
 	lasttime = worktime_get();
@@ -593,7 +615,6 @@ static int st_find_item(uint16_t item_idx, st_item_t *result,
 	st_item_location_t *location)
 {
 	st_ctx_t *ctx = &st_ctx;
-	st_search_ctx_t search_ctx = {0};
 	uint16_t page_start = ctx->page_active;
 	int i = 0;
 	int ret, cnt;
@@ -604,32 +625,35 @@ static int st_find_item(uint16_t item_idx, st_item_t *result,
 	if (!ST_PAGE_VALID(page_start)){
 		page_start = 0;
 	}
-	search_ctx.item_idx = item_idx;
-	search_ctx.last_location.page = ST_PAGE_MAX;
-	for(i = page_start; st_page_last(i) != page_start; i = st_page_last(i))
-	{
-		if (ST_PAGE_S_ERASED == st_page_status(i)){
-			break;
-		}
-		if (cnt){
-			result = NULL;
-		}
-		ret = st_page_find_item(&search_ctx, i, result);
-		if (ret < 0){
-			goto fail;
-		}
-		cnt += ret;
-		if (1 == cnt && location){
-			memcpy(location, &search_ctx.last_location, sizeof(st_item_location_t));
-		}
-		if (cnt > 1){
-			ret = st_delete_item_with_loc(item_idx, &search_ctx.last_location);
+	ctx->search_ctx.item_idx = item_idx;
+	ctx->search_ctx.last_location.page = ST_PAGE_MAX;
+	i = page_start; 
+	do{
+		if (ST_PAGE_S_FULL == st_page_status(ctx, i) || 
+			ST_PAGE_S_ACTIVE == st_page_status(ctx, i))
+		{
+			if (cnt){
+				result = NULL;
+			}
+			ret = st_page_find_item(ctx, i, result);
 			if (ret < 0){
-				LOG_ERROR(TAG, "fail to delete item");
 				goto fail;
 			}
+			cnt += ret;
+			if (1 == cnt && location){
+				memcpy(location, &ctx->search_ctx.last_location, 
+					sizeof(st_item_location_t));
+			}
+			if (cnt > 1){
+				ret = st_delete_item_with_loc(ctx, item_idx, &ctx->search_ctx.last_location);
+				if (ret < 0){
+					LOG_ERROR(TAG, "fail to delete item");
+					goto fail;
+				}
+			}
 		}
-	}
+		i = st_page_last(i);
+	}while(i != page_start);
 	
 	return cnt;
 fail:
@@ -674,13 +698,18 @@ static int st_get_available_page(st_ctx_t *ctx, uint16_t data_len){
 		{
 			return page_idx;
 		}
+		LOG_DEBUG(TAG, "page %d status change(%s -> %s)", page_idx, 
+			st_page_status_str(ctx->pages[page_idx].status), 
+			st_page_status_str(ST_PAGE_S_FULL));
 		ret = st_page_status_update(ctx, page_idx, ST_PAGE_S_FULL);
 		if (ret < 0){
-			LOG_ERROR(TAG, "fail to write new item");
+			LOG_ERROR(TAG, "fail to upadate status");
 			goto fail;
 		}
+	}else{
+		page_idx = 0;
 	}
-	page_idx = st_first_page(ctx, 0, ST_PAGE_S_ERASED);
+	page_idx = st_first_page(ctx, page_idx, ST_PAGE_S_ERASED);
 	if (!ST_PAGE_VALID(page_idx)){
 		LOG_ERROR(TAG, "no enough space");
 		goto fail;
@@ -689,6 +718,15 @@ static int st_get_available_page(st_ctx_t *ctx, uint16_t data_len){
 fail:
 	return -1;
 }
+
+/**
+ * @brief write item to data storage
+ * @param item_idx index of data item
+ * @param buf pointer to hold item data
+ * @param len length of "buf"
+ * @return (-1)-ERROR, 0-success
+ */
+
 int st_write_item(uint16_t item_idx, uint8_t *buf, int len)
 {
 	st_item_t item = {0};
@@ -731,7 +769,7 @@ int st_write_item(uint16_t item_idx, uint8_t *buf, int len)
 		ctx->page_active = page_idx;
 	}
 	if (ST_PAGE_VALID(location.page)){
-		ret = st_delete_item_with_loc(item_idx, &location);
+		ret = st_delete_item_with_loc(ctx, item_idx, &location);
 		if (ret < 0){
 			LOG_ERROR(TAG, "fail to delete old item");
 			goto fail;
@@ -742,6 +780,13 @@ fail:
 	return -1;
 }
 
+/**
+ * @brief read item from data storage
+ * @param item_idx index of data item
+ * @param buf pointer to hold item data
+ * @param len length of "buf"
+ * @return (-1)-ERROR, 0-item not found, (>0)-length(in bytes) of data read
+ */
 int st_read_item(uint16_t item_idx, uint8_t *buf, int len)
 {
 	st_item_t item = {0};
@@ -764,7 +809,7 @@ int st_read_item(uint16_t item_idx, uint8_t *buf, int len)
 		return 0;
 	}
 	memcpy(buf, item.content, MIN(len, item.header.len));
-	return 1;
+	return MIN(len, item.header.len);
 fail:
 	return -1;
 }
@@ -780,7 +825,7 @@ int st_delete_item(uint16_t item_idx){
 	for(i = ctx->page_start; st_page_next(i) != ctx->page_start; 
 		i = st_page_next(i))
 	{
-		if (ST_PAGE_S_ERASED == st_page_status(i)){
+		if (ST_PAGE_S_ERASED == st_page_status(ctx, i)){
 			break;
 		}
 		ret = st_page_delete_item(ctx, i, item_idx);

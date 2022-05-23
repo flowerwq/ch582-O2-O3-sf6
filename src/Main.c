@@ -76,7 +76,7 @@ int main()
 {
     uint32_t appversion;
 	worktime_t worktime = 0;
-	char buf[DISPLAY_LINE_LEN + 1];
+	char buf[2 * DISPLAY_LINE_LEN + 1];
     SetSysClock(CLK_SOURCE_PLL_60MHz);
 	worktime_init();
 	
@@ -91,15 +91,18 @@ int main()
 	uuid_dump();
 	
 	OLED_Init();
-	OLED_ShowPicture(32, 0, 64, 64, smail_64x64_1, 1);
+	OLED_ShowPicture(32, 0, 64, 64, (uint8_t *)smail_64x64_1, 1);
 	OLED_Refresh();
 	
 	display_init();
 	cfg_init();
 	upgrade_init();
 	int i = 0;
-	for(i = 0 ; i < 10; i++){
-		if (st_write_item(10, buf, sizeof(buf))< 0){
+	if (st_write_item(1, buf, sizeof(buf)) < 0){
+		LOG_ERROR(TAG, "fail to write item");
+	}
+	for(i = 0 ; i < 20; i++){
+		if (st_write_item(10, buf, sizeof(buf)) < 0){
 			LOG_ERROR(TAG, "fail to write item");
 		}
 		__nop();
