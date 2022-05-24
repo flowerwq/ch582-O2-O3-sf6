@@ -7,6 +7,8 @@
 
 #define TAG "ST"
 
+#define ST_ITEM_SIZE(pitem)	(((pitem)->header.len) + sizeof(st_item_header_t))
+
 typedef struct st_item_location{
 	uint16_t page;
 	uint16_t offset;
@@ -20,6 +22,7 @@ typedef struct st_search_context {
 
 typedef struct st_context {
 	uint8_t flag_init;
+	uint16_t page_erased;
 	uint16_t page_active;
 	uint16_t page_start;
 	uint16_t page_cnt;
@@ -27,6 +30,10 @@ typedef struct st_context {
 	st_search_ctx_t search_ctx;
 } st_ctx_t;
 static st_ctx_t st_ctx;
+
+static int st_is_init(){
+	return st_ctx.flag_init;
+}
 
 static const char *st_page_status_str(uint8_t status){
 	switch(status){
@@ -85,9 +92,28 @@ static int st_page_read(uint16_t idx, uint16_t offset,
 	}
 	return 0;
 }
+static int st_page_get_freesize(st_ctx_t *ctx, uint16_t idx){
+	if (!ST_PAGE_VALID(idx)){
+		return -1;
+	}
+	switch(ctx->pages[idx].status){
+		case ST_PAGE_S_ERASED:
+		case ST_PAGE_S_FULL:
+		case ST_PAGE_S_UNAVAILABLE:
+			break;
+		case ST_PAGE_S_ACTIVE:
+			return ST_PAGE_CONTENT_MAX - ctx->pages[idx].bytes_used;
+		default:
+			return -1;
+	}
+	return 0;
+}
 static int st_page_erase(st_ctx_t *ctx, uint16_t idx){
 	if (!ST_PAGE_VALID(idx)){
 		return -1;
+	}
+	if (ST_PAGE_S_ERASED == ctx->pages[idx].status){
+		return 0;
 	}
 	LOG_DEBUG(TAG, "erase page %d", idx);
 	if (EEPROM_ERASE(idx * ST_PAGE_SIZE, ST_PAGE_SIZE)){
@@ -97,6 +123,7 @@ static int st_page_erase(st_ctx_t *ctx, uint16_t idx){
 	ctx->pages[idx].bytes_used = 0;
 	ctx->pages[idx].item_cnt = 0;
 	ctx->pages[idx].status = ST_PAGE_S_ERASED;
+	ctx->page_erased ++;
 	return 0;
 }
 //static int st_page_clear(uint16_t idx, uint16_t offset, 
@@ -129,9 +156,20 @@ static int st_page_status_update(st_ctx_t *ctx, uint16_t idx, uint8_t status){
 		return -1;
 	}
 	page = &ctx->pages[idx];
+	if (status == page->status){
+		return 0;
+	}
+	LOG_DEBUG(TAG, "page %d status change(%s -> %s)", idx, 
+		st_page_status_str(page->status), 
+		st_page_status_str(status));
 	if (EEPROM_WRITE(idx * ST_PAGE_SIZE, &status, 1)){
 		LOG_ERROR(TAG, "EEPROM write err.");
 		return -1;
+	}
+	if (ST_PAGE_S_ERASED == page->status){
+		if (ctx->page_erased){
+			ctx->page_erased --;
+		}
 	}
 	if (ST_PAGE_S_ACTIVE == page->status){
 		ctx->page_active = ST_PAGE_MAX;
@@ -197,6 +235,21 @@ static int st_page_last(uint16_t idx){
 	}
 	return ST_PAGE_MAX - 1;
 }
+static int st_first_page(st_ctx_t *ctx, uint16_t page_from, uint8_t status){
+	uint16_t i = 0;
+	int page_start = page_from;
+	if (!ST_PAGE_VALID(page_start)){
+		return -1;
+	}
+	i = page_start;
+	do{
+		if (ctx->pages[i].status == status){
+			return i;
+		}
+		i = st_page_next(i);
+	}while(i != page_start);
+	return ST_PAGE_MAX;
+}
 
 static int st_item_verify(st_item_t *item){
 	crc_type_t crc_type = CRC8_MAXIM_INIT;
@@ -237,24 +290,19 @@ static int st_page_write_item(st_ctx_t *ctx, uint16_t idx, st_item_t *item){
 	LOG_DEBUG(TAG, "write item(idx:%04X,len:%d,crc:%02X) to page %d, offset:%d", 
 		item->header.idx, item->header.len, item->header.crc, idx, 
 		page->bytes_used);
-	bytes_write = item->header.len + sizeof(st_item_header_t);
+	bytes_write = ST_ITEM_SIZE(item);
 	ret = st_page_write(idx, page->bytes_used, (uint8_t *)item, bytes_write);
 	if (ret < 0){
 		LOG_ERROR(TAG, "fail to write item.");
 		goto fail;
 	}
 	page->bytes_used += bytes_write;
+	page->bytes_available += bytes_write;
 	page_status = page->status;
 	if (ST_PAGE_S_ERASED == page->status){
-		LOG_DEBUG(TAG, "page %d status change(%s -> %s)", idx, 
-			st_page_status_str(ST_PAGE_S_ERASED), 
-			st_page_status_str(ST_PAGE_S_ACTIVE));
 		page_status = ST_PAGE_S_ACTIVE;
 	}
 	if (ST_PAGE_CONTENT_MAX - page->bytes_used < sizeof(st_item_header_t)){
-		LOG_DEBUG(TAG, "page %d status change(%s -> %s)", idx, 
-			st_page_status_str(ST_PAGE_S_ACTIVE), 
-			st_page_status_str(ST_PAGE_S_FULL));
 		page_status = ST_PAGE_S_FULL;
 	}
 	if (page_status != page->status){
@@ -268,6 +316,106 @@ static int st_page_write_item(st_ctx_t *ctx, uint16_t idx, st_item_t *item){
 	return 0;
 fail:
 	return -1;
+}
+
+static int st_page_realign(st_ctx_t *ctx, uint16_t idx){
+	st_page_t *page = NULL;
+	st_item_t item = {0};
+	uint16_t offset = 0;
+	int ret = 0;
+	page = &ctx->pages[idx];
+	uint32_t addr = idx * ST_PAGE_SIZE;
+	uint32_t bytes_read = sizeof(item.header);
+	LOG_DEBUG(TAG, "page %d realign", idx);
+	while(offset < page->bytes_used){
+		ret = st_page_read(idx, offset, (uint8_t *)&item.header, 
+			sizeof(st_item_header_t));
+		if (ret < 0){
+			LOG_ERROR(TAG, "fail to read item header.");
+			goto fail;
+		}
+		if (!item.header.crc || !item.header.idx){
+			offset += item.header.len + sizeof(st_item_header_t);
+			continue;
+		}
+		ret = st_page_read(idx, offset + sizeof(st_item_header_t), 
+			item.content, item.header.len);
+		if (ret < 0){
+			LOG_ERROR(TAG, "fail to read item content.");
+			goto fail;
+		}
+		if (!st_item_verify(&item)){
+			LOG_ERROR(TAG, "item verify failed.");
+			item.header.idx = 0;
+			st_page_write(idx, offset, (uint8_t *)&item.header, sizeof(st_item_header_t));
+			offset += item.header.len + sizeof(st_item_header_t);
+			if (page->item_cnt){
+				page->item_cnt --;
+			}
+			continue;
+		}
+		if (st_page_get_freesize(ctx, ctx->page_active) < ST_ITEM_SIZE(&item)){
+			uint16_t page_new = st_first_page(ctx, ctx->page_active, ST_PAGE_S_ERASED);
+			if (!ST_PAGE_VALID(page_new)){
+				LOG_ERROR(TAG, "no enougn page.");
+				goto fail;
+			}
+			st_page_status_update(ctx, ctx->page_active, ST_PAGE_S_FULL);
+			st_page_status_update(ctx, page_new, ST_PAGE_S_ACTIVE);
+		}
+		ret = st_page_write_item(ctx, ctx->page_active, &item);
+		if (ret < 0){
+			LOG_ERROR(TAG, "fail to write item.");
+			goto fail;
+		}
+		offset += ST_ITEM_SIZE(&item);
+	}
+	ret = st_page_erase(ctx, idx);
+	if (ret < 0){
+		LOG_ERROR(TAG, "erase err.");
+		goto fail;
+	}
+	return 0;
+fail:
+	return -1;
+}
+
+
+static int st_realign(st_ctx_t *ctx){
+	int i = 0;
+	int ret = 0;
+	uint16_t page_start = ST_PAGE_MAX;
+	uint16_t page_idx = ST_PAGE_MAX;
+	if (!ctx){
+		LOG_ERROR(TAG, "%s:param err", __FUNCTION__);
+		return -1;
+	}
+	page_start = ctx->page_active;
+	if (!ST_PAGE_VALID(page_start)){
+		page_start = 0;
+	}
+	i = page_start;
+	do {
+		if (ST_PAGE_S_FULL == ctx->pages[i].status){
+			if (!ST_PAGE_VALID(page_idx)){
+				page_idx = i;
+			}else{
+				if (ctx->pages[i].item_cnt < ctx->pages[page_idx].item_cnt){
+					page_idx = i;
+				}
+			}
+		}
+		i = st_page_next(i);
+	}while(i != page_start);
+	if (!ST_PAGE_VALID(page_idx)){
+		LOG_ERROR(TAG, "page not found");
+		return -1;
+	}
+	ret = st_page_realign(ctx, page_idx);
+	if (ret < 0){
+		LOG_ERROR(TAG, "page %d realign failed", page_idx);
+	}
+	return 0;
 }
 
 static int st_page_delete_item(st_ctx_t *ctx, uint16_t idx, uint16_t item_idx)
@@ -316,15 +464,17 @@ static int st_page_delete_item(st_ctx_t *ctx, uint16_t idx, uint16_t item_idx)
 		}
 		if (page->item_cnt){
 			page->item_cnt -= 1;
+			page->bytes_available -= ST_ITEM_SIZE(&item);
 		}
 		cnt ++;
-		offset += item.header.len + sizeof(st_item_header_t);
+		offset += ST_ITEM_SIZE(&item);
 	}
 	if (!page->item_cnt && ST_PAGE_S_FULL == page->status){
 		ret = st_page_erase(ctx, idx);
 		if (ret < 0){
 			LOG_ERROR(TAG, "erase failed.");
 		}
+		st_realign(ctx);
 	}
 	return cnt;
 fail:
@@ -371,8 +521,10 @@ int st_delete_item_with_loc(st_ctx_t *ctx, uint16_t item_idx, st_item_location_t
 	if (!page->item_cnt && ST_PAGE_S_FULL == page->status){
 		ret = st_page_erase(ctx, location->page);
 		if (ret < 0){
-			LOG_ERROR(TAG, "fail to write item header.");
+			LOG_ERROR(TAG, "erase err.");
+			goto fail;
 		}
+		st_realign(ctx);
 	}
 	return 0;
 fail:
@@ -458,6 +610,12 @@ fail:
 
 static worktime_t lasttime;
 
+/**
+ * @brief scan whole page
+ * @param ctx Storage context
+ * @param idx page index
+ * @return 0-success, -1 - error
+ */
 static int st_page_scan(st_ctx_t *ctx, uint16_t idx){
 	st_page_t *page = NULL;
 	st_item_t item = {0};
@@ -469,6 +627,7 @@ static int st_page_scan(st_ctx_t *ctx, uint16_t idx){
 	page->item_cnt = 0;
 	LOG_DEBUG(TAG, "scan page %d", idx);
 	while(page->bytes_used < ST_PAGE_CONTENT_MAX){
+		//read item content
 		ret = st_page_read(idx, page->bytes_used, 
 			(uint8_t *)&item.header, sizeof(item.header));
 		if (ret < 0){
@@ -478,92 +637,100 @@ static int st_page_scan(st_ctx_t *ctx, uint16_t idx){
 		if (0xFFU == item.header.len){
 			break;
 		}
-		LOG_DEBUG(TAG, "item len:%d, idx:0x%04x, crc:%02x", item.header.len,
-			item.header.idx, item.header.crc);
-		page->bytes_used += item.header.len + sizeof(st_item_header_t);
-		if (item.header.idx){
+		if (ST_ITEM_IDX_VALID(item.header.idx)){
+			LOG_DEBUG(TAG, "item len:%d, idx:0x%04x, crc:%02x", item.header.len,
+				item.header.idx, item.header.crc);
+			//load item content
+			ret = st_page_read(idx, page->bytes_used + sizeof(st_item_header_t), 
+				item.content, item.header.len);
+			if (ret < 0){
+				LOG_ERROR(TAG, "fail to read item content.");
+				goto fail;
+			}
+			// verify item content, mark it erased if content is corrupt.
+			if (!st_item_verify(&item)){
+				LOG_ERROR(TAG, "item verify failed.");
+				item.header.idx = 0;
+				st_page_write(idx, page->bytes_used, (uint8_t *)&item.header, sizeof(st_item_header_t));
+				page->bytes_used += item.header.len + sizeof(st_item_header_t);
+				continue;
+			}
+			page->bytes_available += item.header.len + sizeof(st_item_header_t);
 			page->item_cnt ++;
 		}
+		page->bytes_used += item.header.len + sizeof(st_item_header_t);
 	}
 	if (page->bytes_used >= ST_PAGE_CONTENT_MAX){
 		st_page_status_update(ctx, idx, ST_PAGE_S_FULL);
 	}
-	LOG_DEBUG(TAG, "page %d scan finish, %d bytes used", idx, page->bytes_used);
+	// erase page if status is FULL and all item was marked as erased
+	if (ST_PAGE_S_FULL == page->status && !page->item_cnt){
+		ret = st_page_erase(ctx, idx);
+		if (ret < 0){
+			LOG_ERROR(TAG, "erase err.");
+			goto fail;
+		}
+	}
+	LOG_DEBUG(TAG, "page %d scan finish, %d bytes used, %d bytes available", 
+		idx, page->bytes_used, page->bytes_available);
 	return 0;
 fail:
 	return -1;
 }
 
-static int st_page_init(st_ctx_t *ctx, uint16_t idx){
+static int st_page_init(st_ctx_t *ctx){
 	st_page_t *page = NULL;
-	int bytes_read = 0;
 	int ret = 0;
-	if (!ST_PAGE_VALID(idx)){
-		LOG_ERROR(TAG, "invalid idx");
-		goto fail;
-	}
-	page = &ctx->pages[idx];
-	page->item_cnt = 0;
-	page->bytes_used = 0;
-	memset(page, 0, sizeof(st_page_t));
-	bytes_read = sizeof(page->status);
-	if (EEPROM_READ(idx * ST_PAGE_SIZE, &page->status, bytes_read)){
-		LOG_ERROR(TAG, "fail to read page status");
-		goto fail;
-	}
-	LOG_DEBUG(TAG, "page %d: %s", idx, st_page_status_str(page->status));
-	switch(page->status){
-		case ST_PAGE_S_UNAVAILABLE:
-			break;
-		case ST_PAGE_S_ERASED:
-			ret = st_page_erase_check(idx);
-			if (ret < 0){
-				LOG_ERROR(TAG, "erase check err.");
-				goto fail;
-			}
-			if (!ret){
-				LOG_ERROR(TAG, "erace check failed. erase again");
+	uint16_t idx = ST_PAGE_MAX;
+
+	for(idx = 0; idx < ST_PAGE_MAX; idx++){
+		page = &ctx->pages[idx];
+		memset(page, 0, sizeof(st_page_t));
+		if (EEPROM_READ(idx * ST_PAGE_SIZE, &page->status, sizeof(page->status))){
+			LOG_ERROR(TAG, "fail to read page status");
+			goto fail;
+		}
+		LOG_DEBUG(TAG, "page %d: %s", idx, st_page_status_str(page->status));
+		switch(page->status){
+			case ST_PAGE_S_UNAVAILABLE:
+				break;
+			case ST_PAGE_S_ERASED:
+				ret = st_page_erase_check(idx);
+				if (ret < 0){
+					LOG_ERROR(TAG, "erase check err.");
+					goto fail;
+				}
+				if (!ret){
+					LOG_ERROR(TAG, "erace check failed. erase again");
+					if (st_page_erase(ctx, idx) < 0){
+						LOG_ERROR(TAG, "erase err");
+						goto fail;
+					}
+				}
+				ctx->page_erased ++;
+				break;
+			case ST_PAGE_S_FULL:
+			case ST_PAGE_S_ACTIVE:
+				if (st_page_scan(ctx, idx)){
+					LOG_ERROR(TAG, "fail to load page");
+					goto fail;
+				}
+				ctx->page_active = idx;
+				break;
+			default:
+				LOG_ERROR(TAG, "unknown status(%02x), erase whole page", page->status);
 				if (st_page_erase(ctx, idx) < 0){
 					LOG_ERROR(TAG, "erase err");
 					goto fail;
-				}
-			}
-			break;
-		case ST_PAGE_S_FULL:
-		case ST_PAGE_S_ACTIVE:
-			if (st_page_scan(ctx, idx)){
-				LOG_ERROR(TAG, "fail to load page");
-				goto fail;
-			}
-			ctx->page_active = idx;
-			break;
-		default:
-			LOG_ERROR(TAG, "unknown status(%02x), erase whole page", page->status);
-			if (st_page_erase(ctx, idx) < 0){
-				LOG_ERROR(TAG, "erase err");
-				goto fail;
-			};
-			page->status = 0xff;
+				};
+				page->status = 0xff;
+		}
 	}
+	LOG_DEBUG(TAG, "page init finish, erased:%d, active:%d", ctx->page_erased,
+		ctx->page_active);
 	return 0;
 fail:
 	return -1;
-}
-
-static int st_first_page(st_ctx_t *ctx, uint16_t page_from, uint8_t status){
-	uint16_t i = 0;
-	int page_start = page_from;
-	if (!ST_PAGE_VALID(page_start)){
-		return -1;
-	}
-	i = page_start;
-	do{
-		if (ctx->pages[i].status == status){
-			return i;
-		}
-		i = st_page_next(i);
-	}while(i != page_start);
-	return ST_PAGE_MAX;
 }
 
 int st_erase_all(st_ctx_t *ctx){
@@ -592,15 +759,12 @@ fail:
  */
 
 int st_init(){
-	uint16_t i = 0;
 	int ret = 0;
 	st_page_status_t page_status = {0};
 	st_ctx.page_start = ST_PAGE_MAX;
 	st_ctx.page_active = ST_PAGE_MAX;
 	lasttime = worktime_get();
-	for (i = 0; i < ST_PAGE_MAX; i++){
-		st_page_init(&st_ctx, i);
-	}
+	st_page_init(&st_ctx);
 	st_ctx.flag_init = 1;
 	
 out:
@@ -608,9 +772,7 @@ out:
 fail:
 	return -1;
 }
-static int st_is_init(){
-	return st_ctx.flag_init;
-}
+
 static int st_find_item(uint16_t item_idx, st_item_t *result, 
 	st_item_location_t *location)
 {
@@ -660,22 +822,6 @@ fail:
 	return -1;
 }
 
-static int st_page_get_freesize(st_ctx_t *ctx, uint16_t idx){
-	if (!ST_PAGE_VALID(idx)){
-		return -1;
-	}
-	switch(ctx->pages[idx].status){
-		case ST_PAGE_S_ERASED:
-		case ST_PAGE_S_FULL:
-		case ST_PAGE_S_UNAVAILABLE:
-			break;
-		case ST_PAGE_S_ACTIVE:
-			return ST_PAGE_CONTENT_MAX - ctx->pages[idx].bytes_used;
-		default:
-			return -1;
-	}
-	return 0;
-}
 static int st_get_available_page(st_ctx_t *ctx, uint16_t data_len){
 	int i = 0;
 	int ret = 0;
@@ -686,6 +832,9 @@ static int st_get_available_page(st_ctx_t *ctx, uint16_t data_len){
 	}
 	if (data_len + sizeof(st_item_header_t) > ST_MAX_CONTENT_LEN){
 		return -1;
+	}
+	if (ctx->page_erased <= 2){
+		st_realign(ctx);
 	}
 	if (ST_PAGE_VALID(ctx->page_active)){
 		page_idx = ctx->page_active;
@@ -698,9 +847,6 @@ static int st_get_available_page(st_ctx_t *ctx, uint16_t data_len){
 		{
 			return page_idx;
 		}
-		LOG_DEBUG(TAG, "page %d status change(%s -> %s)", page_idx, 
-			st_page_status_str(ctx->pages[page_idx].status), 
-			st_page_status_str(ST_PAGE_S_FULL));
 		ret = st_page_status_update(ctx, page_idx, ST_PAGE_S_FULL);
 		if (ret < 0){
 			LOG_ERROR(TAG, "fail to upadate status");
@@ -709,9 +855,15 @@ static int st_get_available_page(st_ctx_t *ctx, uint16_t data_len){
 	}else{
 		page_idx = 0;
 	}
+	
 	page_idx = st_first_page(ctx, page_idx, ST_PAGE_S_ERASED);
 	if (!ST_PAGE_VALID(page_idx)){
 		LOG_ERROR(TAG, "no enough space");
+		goto fail;
+	}
+	ret = st_page_status_update(ctx, page_idx, ST_PAGE_S_ACTIVE);
+	if (ret < 0){
+		LOG_ERROR(TAG, "fail to upadate status");
 		goto fail;
 	}
 	return page_idx;

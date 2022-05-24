@@ -5,7 +5,7 @@
 
 #define ST_PAGE_SIZE EEPROM_PAGE_SIZE
 //#define ST_PAGE_MAX	(EEPROM_MAX_SIZE/EEPROM_PAGE_SIZE)
-#define ST_PAGE_MAX	3
+#define ST_PAGE_MAX	4
 
 #define ST_PAGE_VALID(p)	((p) >= 0 && (p) < ST_PAGE_MAX)
 

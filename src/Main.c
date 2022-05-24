@@ -101,6 +101,15 @@ int main()
 	if (st_write_item(1, buf, sizeof(buf)) < 0){
 		LOG_ERROR(TAG, "fail to write item");
 	}
+	for(i = 0 ; i < 6; i++){
+		if (st_write_item(10, buf, sizeof(buf)) < 0){
+			LOG_ERROR(TAG, "fail to write item");
+		}
+		__nop();
+	}
+	if (st_write_item(2, buf, sizeof(buf)) < 0){
+		LOG_ERROR(TAG, "fail to write item");
+	}
 	for(i = 0 ; i < 20; i++){
 		if (st_write_item(10, buf, sizeof(buf)) < 0){
 			LOG_ERROR(TAG, "fail to write item");
