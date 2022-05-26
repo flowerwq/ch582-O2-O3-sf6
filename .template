@@ -1,7 +1,7 @@
 Mcu Type=CH58x
 Address=0x00000000
 Target Path=obj/CH582M-boot.hex
-Erase All=true
+Erase All=false
 Program=true
 Verify=true
 Reset=true

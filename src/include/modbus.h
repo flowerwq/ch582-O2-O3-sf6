@@ -40,6 +40,7 @@ typedef enum modbus_status {
 typedef struct modbus_slave_context{
 	ModbusSlave slave;
 	uint8_t address;
+	uint32_t baudrate;
 	uint32_t tcnt;
 	uint8_t flag_frame_err;
 	modbus_status_t status;

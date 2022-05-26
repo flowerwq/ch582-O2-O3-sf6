@@ -408,8 +408,8 @@ static int st_realign(st_ctx_t *ctx){
 		i = st_page_next(i);
 	}while(i != page_start);
 	if (!ST_PAGE_VALID(page_idx)){
-		LOG_ERROR(TAG, "page not found");
-		return -1;
+		LOG_DEBUG(TAG, "%s:page not found", __FUNCTION__);
+		return 0;
 	}
 	ret = st_page_realign(ctx, page_idx);
 	if (ret < 0){
@@ -474,7 +474,6 @@ static int st_page_delete_item(st_ctx_t *ctx, uint16_t idx, uint16_t item_idx)
 		if (ret < 0){
 			LOG_ERROR(TAG, "erase failed.");
 		}
-		st_realign(ctx);
 	}
 	return cnt;
 fail:
@@ -489,12 +488,13 @@ int st_delete_item_with_loc(st_ctx_t *ctx, uint16_t item_idx, st_item_location_t
 		goto fail;
 	}
 	if (!ST_PAGE_VALID(location->page)){
+		LOG_ERROR(TAG, "%s:invalid page idx(%d)", location->page, __FUNCTION__);
 		goto fail;
 	}
 	page = &ctx->pages[location->page];
 	if (!page->item_cnt){
-		LOG_ERROR(TAG, "%s:target page is empty", __FUNCTION__);
-		goto fail;
+		LOG_DEBUG(TAG, "%s:target page is empty", __FUNCTION__);
+		goto out;
 	}
 	ret = st_page_read(location->page, location->offset, (uint8_t *)&header, 
 		sizeof(st_item_header_t));
@@ -506,7 +506,7 @@ int st_delete_item_with_loc(st_ctx_t *ctx, uint16_t item_idx, st_item_location_t
 		LOG_ERROR(TAG, "%s:idx not match", __FUNCTION__);
 		goto fail;
 	}
-	LOG_DEBUG(TAG, "delete item(idx:%d) from page %d, offset:%d", 
+	LOG_DEBUG(TAG, "delete item(idx:%04X) from page %d, offset:%d", 
 			item_idx, location->page, location->offset);
 	header.idx = 0;
 	ret = st_page_write(location->page, location->offset, (uint8_t *)&header, 
@@ -524,8 +524,8 @@ int st_delete_item_with_loc(st_ctx_t *ctx, uint16_t item_idx, st_item_location_t
 			LOG_ERROR(TAG, "erase err.");
 			goto fail;
 		}
-		st_realign(ctx);
 	}
+out:
 	return 0;
 fail:
 	return -1;
@@ -561,7 +561,7 @@ static int st_page_find_item(st_ctx_t *ctx, uint16_t idx,
 			LOG_ERROR(TAG, "fail to read item header.");
 			goto fail;
 		}
-		if (!item.header.crc || !item.header.idx){
+		if (!item.header.idx){
 			offset += item.header.len + sizeof(st_item_header_t);
 			continue;
 		}
@@ -569,7 +569,7 @@ static int st_page_find_item(st_ctx_t *ctx, uint16_t idx,
 			offset += item.header.len + sizeof(st_item_header_t);
 			continue;
 		}
-		LOG_DEBUG(TAG, "find idx %d in page %d with offset %d", item.header.idx, 
+		LOG_DEBUG(TAG, "find idx %04X in page %d with offset %d", item.header.idx, 
 			idx, offset);
 		ret = st_page_read(idx, offset + sizeof(st_item_header_t), 
 			item.content, item.header.len);
@@ -833,9 +833,6 @@ static int st_get_available_page(st_ctx_t *ctx, uint16_t data_len){
 	if (data_len + sizeof(st_item_header_t) > ST_MAX_CONTENT_LEN){
 		return -1;
 	}
-	if (ctx->page_erased <= 2){
-		st_realign(ctx);
-	}
 	if (ST_PAGE_VALID(ctx->page_active)){
 		page_idx = ctx->page_active;
 	}else{
@@ -846,6 +843,16 @@ static int st_get_available_page(st_ctx_t *ctx, uint16_t data_len){
 			data_len + sizeof(st_item_header_t))
 		{
 			return page_idx;
+		}
+		if (ctx->page_erased <= 2){
+			st_realign(ctx);
+			//realign may change active page
+			page_idx = ctx->page_active;
+			if (st_page_get_freesize(ctx, page_idx) >= 
+				data_len + sizeof(st_item_header_t))
+			{
+				return page_idx;
+			}
 		}
 		ret = st_page_status_update(ctx, page_idx, ST_PAGE_S_FULL);
 		if (ret < 0){

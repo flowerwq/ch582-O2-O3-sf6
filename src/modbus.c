@@ -4,23 +4,30 @@
 #include "modbus.h"
 #include "CH58x_common.h"
 #include "worktime.h"
+#include "configtool.h"
+#include "utils.h"
 
-#define MB_ADDR	1
-
-#define MB_BAUDRATE	115200
-#define MB_TIMER_INIT_VALUE	(GetSysClock() * 5 / MB_BAUDRATE)
+#define TAG "MB"
 
 static int8_t mb_timer_ref;
 static uint8_t mb_flag_transparent;
 static mb_slave_ctx_t mb_slave_ctx;
 static uint32_t mb_ts_last = 0;
+
 #define MB_TIMER_IS_RUNNING() (R8_TMR0_CTRL_MOD & RB_TMR_COUNT_EN)
 #define MB_TIMER_STOP()	TMR0_Disable()
-#define MB_TIMER_RESUME()	TMR0_TimerInit(MB_TIMER_INIT_VALUE)
+#define MB_TIMER_RESUME()	TMR0_TimerInit(modbus_t05_cnt(mb_slave_ctx.baudrate))
+
+static uint32_t modbus_t05_cnt(uint32_t baudrate){
+	if (baudrate <= 19200){
+		return (GetSysClock() * 5 / baudrate);
+	}
+	return GetSysClock() / 1000000 * 750;
+}
 
 static void modbus_timer_enable(){
 	if (!MB_TIMER_IS_RUNNING()){
-		TMR0_TimerInit(MB_TIMER_INIT_VALUE);
+		TMR0_TimerInit(modbus_t05_cnt(mb_slave_ctx.baudrate));
 	}
 	mb_timer_ref ++;
 }
@@ -90,7 +97,6 @@ static void modbus_timer_init(){
 
     TMR0_ITCfg(ENABLE, TMR0_3_IT_CYC_END); // 开启中断
     PFIC_EnableIRQ(TMR0_IRQn);
-	TMR0_TimerInit(MB_TIMER_INIT_VALUE);
 	TMR0_Disable();
 }
 
@@ -146,7 +152,8 @@ ModbusError register_callback( const ModbusSlave *status,
 	}
 	return 0;
 }
-LIGHTMODBUS_WARN_UNUSED ModbusError modbusStaticAllocator(ModbusBuffer *buffer, uint16_t size, void *context)
+static LIGHTMODBUS_WARN_UNUSED ModbusError modbus_slave_allocator(
+	ModbusBuffer *buffer, uint16_t size, void *context)
 {
     mb_slave_ctx_t *ctx = (mb_slave_ctx_t *)context;
     if (!size)
@@ -172,22 +179,6 @@ LIGHTMODBUS_WARN_UNUSED ModbusError modbusStaticAllocator(ModbusBuffer *buffer, 
     }
 }
 
-int modbus_slave_init(mb_callback_t *callback){
-	memset(&mb_slave_ctx, 0, sizeof(mb_slave_ctx_t));
-	mb_slave_ctx.address = MB_ADDR;
-	mb_slave_ctx.slave.registerCallback = register_callback;
-	if(callback){
-		memcpy(&mb_slave_ctx.callback, callback, sizeof(mb_callback_t));
-	}
-	ModbusErrorInfo err = modbusSlaveInit(&mb_slave_ctx.slave, 
-		register_callback, NULL, modbusStaticAllocator, 
-		modbusSlaveDefaultFunctions, modbusSlaveDefaultFunctionCount);
-	if (!modbusIsOk(err)){
-		return -1;
-	}
-	modbusSlaveSetUserPointer(&mb_slave_ctx.slave, &mb_slave_ctx);
-	return 0;
-}
 
 /*********************************************************************
  * @fn      UART2_IRQHandler
@@ -235,12 +226,12 @@ void UART2_IRQHandler(void)
     }
 }
 
-int modbus_uart_init(){
+int modbus_slave_uart_init(mb_slave_ctx_t *slave_ctx){
 	GPIOA_ModeCfg(GPIO_Pin_6, GPIO_ModeIN_PU);
 	GPIOA_ModeCfg(GPIO_Pin_7, GPIO_ModeOut_PP_20mA);
 	GPIOA_SetBits(GPIO_Pin_7);
 	UART2_DefInit();
-	UART2_BaudRateCfg(MB_BAUDRATE);
+	UART2_BaudRateCfg(slave_ctx->baudrate);
 	UART2_ByteTrigCfg(UART_1BYTE_TRIG);
 	UART2_INTCfg(ENABLE, RB_IER_RECV_RDY | RB_IER_LINE_STAT);
 	PFIC_EnableIRQ(UART2_IRQn);
@@ -251,6 +242,30 @@ int modbus_uart_send(uint8_t *buf, int len){
 		return -1;
 	}
 	UART2_SendString(buf, len);
+	return 0;
+}
+
+int modbus_slave_init(mb_callback_t *callback){
+	cfg_uart_t cfg_uart = {0};
+	uint8_t addr = 1;
+	cfg_get_mb_uart(&cfg_uart);
+	cfg_get_mb_addr(&addr);
+	memset(&mb_slave_ctx, 0, sizeof(mb_slave_ctx_t));
+	mb_slave_ctx.address = addr;
+	mb_slave_ctx.baudrate = cfg_uart.baudrate;
+	mb_slave_ctx.slave.registerCallback = register_callback;
+	if(callback){
+		memcpy(&mb_slave_ctx.callback, callback, sizeof(mb_callback_t));
+	}
+	ModbusErrorInfo err = modbusSlaveInit(&mb_slave_ctx.slave, 
+		register_callback, NULL, modbus_slave_allocator, 
+		modbusSlaveDefaultFunctions, modbusSlaveDefaultFunctionCount);
+	if (!modbusIsOk(err)){
+		return -1;
+	}
+	modbusSlaveSetUserPointer(&mb_slave_ctx.slave, &mb_slave_ctx);
+	modbus_slave_uart_init(&mb_slave_ctx);
+	return 0;
 }
 void modbus_init(mb_callback_t *callback){
 	mb_timer_ref = 0;
@@ -258,10 +273,10 @@ void modbus_init(mb_callback_t *callback){
 	mb_flag_transparent = 0;
 	modbus_regs_init();
 	if (modbus_slave_init(callback) < 0){
+		LOG_ERROR(TAG, "slave init failed.");
 		return;
 	}
 	modbus_timer_init();
-	modbus_uart_init();
 }
 
 void modbus_deinit(){

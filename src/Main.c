@@ -97,25 +97,6 @@ int main()
 	display_init();
 	cfg_init();
 	upgrade_init();
-	int i = 0;
-	if (st_write_item(1, buf, sizeof(buf)) < 0){
-		LOG_ERROR(TAG, "fail to write item");
-	}
-	for(i = 0 ; i < 6; i++){
-		if (st_write_item(10, buf, sizeof(buf)) < 0){
-			LOG_ERROR(TAG, "fail to write item");
-		}
-		__nop();
-	}
-	if (st_write_item(2, buf, sizeof(buf)) < 0){
-		LOG_ERROR(TAG, "fail to write item");
-	}
-	for(i = 0 ; i < 20; i++){
-		if (st_write_item(10, buf, sizeof(buf)) < 0){
-			LOG_ERROR(TAG, "fail to write item");
-		}
-		__nop();
-	}
 	while(worktime_since(worktime) < 1000){
 		__nop();
 	}
@@ -151,47 +132,4 @@ int main()
 	}
 }
 
-///*********************************************************************
-// * @fn      UART1_IRQHandler
-// *
-// * @brief   UART1中断函数
-// *
-// * @return  none
-// */
-//__INTERRUPT
-//__HIGH_CODE
-//void UART1_IRQHandler(void)
-//{
-//    volatile uint8_t i;
-//
-//    switch(UART1_GetITFlag())
-//    {
-//        case UART_II_LINE_STAT: // 线路状态错误
-//        {
-//            UART1_GetLinSTA();
-//            break;
-//        }
-//
-//        case UART_II_RECV_RDY: // 数据达到设置触发点
-//            for(i = 0; i != trigB; i++)
-//            {
-//                RxBuff[i] = UART1_RecvByte();
-//                UART1_SendByte(RxBuff[i]);
-//            }
-//            break;
-//
-//        case UART_II_RECV_TOUT: // 接收超时，暂时一帧数据接收完成
-//            i = UART1_RecvString(RxBuff);
-//            UART1_SendString(RxBuff, i);
-//            break;
-//
-//        case UART_II_THR_EMPTY: // 发送缓存区空，可继续发送
-//            break;
-//
-//        case UART_II_MODEM_CHG: // 只支持串口0
-//            break;
-//
-//        default:
-//            break;
-//    }
-//}
+

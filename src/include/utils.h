@@ -7,6 +7,8 @@
 #ifndef MAX
 #define MAX(a,b)	((a) > (b) ? (a) : (b))
 #endif
+
+#define ARRAY_SIZE(a)	(sizeof(a)/sizeof((a)[0]))
 #define ALIGN_4(addr)	((addr + 3) & (~0x03UL))
 #define ALIGN(n, align)	((n) + ((align) - (n) % (align)))
 #define ABS(v)	((v) < 0 ? -(v) : (v))
