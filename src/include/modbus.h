@@ -48,6 +48,7 @@ typedef struct modbus_slave_context{
 	int req_len;
 	uint8_t req_buf[256];
 	uint8_t resp_buf[256];
+	uint32_t lasttime_recv;
 } mb_slave_ctx_t;
 
 int modbus_is_receiving();

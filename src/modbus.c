@@ -10,9 +10,7 @@
 #define TAG "MB"
 
 static int8_t mb_timer_ref;
-static uint8_t mb_flag_transparent;
 static mb_slave_ctx_t mb_slave_ctx;
-static uint32_t mb_ts_last = 0;
 
 #define MB_TIMER_IS_RUNNING() (R8_TMR0_CTRL_MOD & RB_TMR_COUNT_EN)
 #define MB_TIMER_STOP()	TMR0_Disable()
@@ -269,8 +267,6 @@ int modbus_slave_init(mb_callback_t *callback){
 }
 void modbus_init(mb_callback_t *callback){
 	mb_timer_ref = 0;
-	mb_ts_last = 0;
-	mb_flag_transparent = 0;
 	modbus_regs_init();
 	if (modbus_slave_init(callback) < 0){
 		LOG_ERROR(TAG, "slave init failed.");
@@ -287,13 +283,13 @@ void modbus_deinit(){
 }
 
 uint32_t modbus_lasttime_recv(){
-	return mb_ts_last;
+	return mb_slave_ctx.lasttime_recv;
 }
 
 void modbus_frame_check(){
 	ModbusErrorInfo err;
 	if (MODBUS_S_RECV_FINISH == mb_slave_ctx.status){
-		mb_ts_last = worktime_get()/1000;
+		mb_slave_ctx.lasttime_recv = worktime_get()/1000;
 		if (!mb_slave_ctx.flag_frame_err){
 			err = modbusParseRequestRTU( &mb_slave_ctx.slave, 
 				mb_slave_ctx.address, mb_slave_ctx.req_buf, mb_slave_ctx.req_len);
